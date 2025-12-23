@@ -39,11 +39,12 @@ export default function Footer({ hideFooter }) {
           <h3 className="font-semibold text-lg mb-1">Quick Links</h3>
           <div className="flex flex-col gap-1 text-sm text-white/80 text-right">
             <button
-              className="hover:text-white hover:underline transition-all px-2 py-1 text-right transform hover:scale-105"
-              onClick={() => navigate("/contact")}
-            >
-              Contact Us
-            </button>
+  className="hover:text-white hover:underline cursor-pointer transition-all px-2 py-1 text-right transform hover:scale-105"
+  onClick={() => navigate("/contact")}
+>
+  Contact Us
+</button>
+
             <button
               className="hover:text-white hover:underline transition-all px-2 py-1 text-right transform hover:scale-105"
               onClick={() => navigate("/privacy")}

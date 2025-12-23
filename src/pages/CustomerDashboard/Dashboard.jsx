@@ -21,17 +21,72 @@ import Footer from "../../components/Footer";
 import NewBooking from "./NewBooking";
 import TrackShipment from "./TrackShipment";
 import AllBookings from "./AllBookings";
-
+import Swal from "sweetalert2";
+import { signOut } from "firebase/auth";
+import { auth } from "../../firebase";
+import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+import { db } from "../../firebase"; 
+import { doc, getDoc } from "firebase/firestore";
 
 export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAllBookings, setShowAllBookings] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [activePage, setActivePage] = useState("overview");
+  const navigate = useNavigate();
+  useEffect(() => {
+  const fetchUserData = async () => {
+    if (!auth.currentUser) return;
 
-  const handleLogout = () => {
-    alert("User logged out!");
+    const uid = auth.currentUser.uid;
+    const collectionName = "customers"; // ya "agencies" depending on login
+
+    const docRef = doc(db, collectionName, uid);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      setUserData({
+        fullName: docSnap.data().fullName || "User",
+        email: auth.currentUser.email || "",
+      });
+    } else {
+      setUserData({
+        fullName: "User",
+        email: auth.currentUser.email || "",
+      });
+    }
   };
+
+  fetchUserData();
+}, []);
+
+  const [userData, setUserData] = useState({ fullName: "", email: "" });
+  const handleLogout = async () => {
+  const result = await Swal.fire({
+    title: "Logout?",
+    text: "Are you sure you want to logout?",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonColor: "#d33",
+    cancelButtonColor: "#3085d6",
+    confirmButtonText: "Yes, Logout",
+  });
+
+  if (result.isConfirmed) {
+    await signOut(auth);
+
+    await Swal.fire({
+      icon: "success",
+      title: "Logged out",
+      text: "You have been logged out successfully",
+      timer: 1500,
+      showConfirmButton: false,
+    });
+
+    navigate("/select-user");
+  }
+};
 
   const getPageMainTitle = () => {
     switch (activePage) {
@@ -59,9 +114,18 @@ export default function Dashboard() {
     }
   };
 
-  const SidebarItem = ({ icon, label, pageKey }) => (
+  const SidebarItem = ({ icon, label, pageKey }) => {
+  const handleClick = () => {
+    if (pageKey === "logout") {
+      handleLogout();        // 🔴 logout action
+    } else {
+      setActivePage(pageKey); // 🟢 normal pages
+    }
+  };
+
+  return (
     <div
-      onClick={() => setActivePage(pageKey)}
+      onClick={handleClick}
       className={`flex items-center gap-3 px-4 py-2 rounded-lg cursor-pointer transition ${
         activePage === pageKey
           ? "bg-blue-100 text-blue-700 font-semibold"
@@ -72,6 +136,8 @@ export default function Dashboard() {
       <span>{label}</span>
     </div>
   );
+};
+
 
   return (
     <div className="flex min-h-screen bg-gray-100">
@@ -155,16 +221,17 @@ export default function Dashboard() {
       onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
     >
       <div
-        className="w-10 h-10 rounded-full text-white flex items-center justify-center font-semibold"
-        style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
-      >
-        JD
-      </div>
+  className="w-10 h-10 rounded-full text-white flex items-center justify-center font-semibold"
+  style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
+>
+  {userData.fullName ? userData.fullName.charAt(0) : "U"}
+</div>
 
-      <div>
-        <p className="font-medium text-gray-900">John Doe</p>
-        <p className="text-sm text-gray-500 -mt-1">john.doe@example.com</p>
-      </div>
+<div>
+  <p className="font-medium text-gray-900">{userData.fullName}</p>
+  <p className="text-sm text-gray-500 -mt-1">{userData.email}</p>
+</div>
+
 
       {profileDropdownOpen && (
         <div className="absolute right-0 top-14 bg-white shadow-lg border rounded-lg w-44 z-50 p-2">
@@ -189,7 +256,10 @@ export default function Dashboard() {
         {/* ----------------- HEADER ----------------- */}
         {activePage === "overview" ? (
           <header className="mt-6">
-            <h1 className="text-5xl font-semibold">Welcome back, John! 👋</h1>
+            <h1 className="text-5xl font-semibold">
+  Welcome back, {userData.fullName || "User"}! 👋
+</h1>
+
             <p className="text-gray-600 text-xl mt-3">
               Book your shipment and track deliveries
             </p>
@@ -351,7 +421,7 @@ export default function Dashboard() {
         {activePage === "newBooking" && <NewBooking />}
         {activePage === "track" && <TrackShipment />}
         {activePage === "all" && <AllBookings />}
-        {activePage === "logout" && handleLogout()}
+        
 
         {/* ----------------- FOOTER ----------------- */}
         <Footer />

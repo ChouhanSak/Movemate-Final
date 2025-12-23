@@ -10,13 +10,14 @@ export default function TermsAndConditions({ setPage }) {
     <div className="min-h-screen bg-white p-6 md:p-12">
       
       {/* BACK BUTTON */}
-      <button
-  className="flex items-center gap-2 text-purple-600 mb-6 hover:underline"
-  onClick={() => navigate("/select-user")}
- // <-- change here
->
-  <ArrowLeft size={20} /> Back to Home
-</button>
+      <div className="max-w-3xl mx-auto mb-4">
+  <button
+    onClick={() => navigate(-1)}
+    className="flex items-center gap-2 text-purple-600 hover:underline"
+  >
+    <ArrowLeft size={20} /> Back to Home
+  </button>
+</div>
 
       <div className="max-w-4xl mx-auto bg-gray-50 p-8 rounded-2xl shadow-md space-y-8">
 

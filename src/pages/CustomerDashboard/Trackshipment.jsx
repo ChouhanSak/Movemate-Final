@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CheckCircle, Clock, Truck, Star, ArrowLeft } from "lucide-react";
+import { CheckCircle, Clock, Truck, ArrowLeft } from "lucide-react";
 
 export default function TrackShipment({ onBack }) {
   const [bookingId, setBookingId] = useState("");
@@ -8,28 +8,31 @@ export default function TrackShipment({ onBack }) {
   const [hover, setHover] = useState(0);
   const [submitted, setSubmitted] = useState(false);
 
-  // Dummy sample data
+  // Dispute states
+  const [disputeFile, setDisputeFile] = useState(null);
+  const [disputeDescription, setDisputeDescription] = useState("");
+  const [disputeSubmitted, setDisputeSubmitted] = useState(false);
+
+  // Dummy sample data - delivery complete for testing
   const dummyData = {
-    status: "In Transit",
+    status: "Delivered",
     timeline: [
       { label: "Booking Placed", done: true },
       { label: "In Transit", done: true },
-      { label: "Delivered", done: false },
+      { label: "Delivered", done: true },
     ],
   };
 
+  // Track shipment
   const handleTrack = () => {
     if (!bookingId.trim()) return alert("Please enter Booking ID!");
     setData(dummyData);
   };
 
-  // ⭐ FIX: Rating toggle function
+  // Rating toggle
   const toggleRating = (star) => {
-    if (rating === star) {
-      setRating(0); // unselect logic
-    } else {
-      setRating(star);
-    }
+    if (rating === star) setRating(0);
+    else setRating(star);
   };
 
   const handleSubmitRating = () => {
@@ -37,9 +40,29 @@ export default function TrackShipment({ onBack }) {
     setSubmitted(true);
   };
 
+  // Dispute handlers
+  const handleDisputeFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setDisputeFile(e.target.files[0]);
+    }
+  };
+
+  const handleSubmitDispute = () => {
+    if (!disputeFile) return alert("Please select an image to upload!");
+    if (!disputeDescription.trim())
+      return alert("Please enter a description of the defect!");
+
+    // TODO: Upload file to Firebase Storage or backend, save description too
+    console.log("Dispute Submitted:", {
+      file: disputeFile,
+      description: disputeDescription,
+    });
+
+    setDisputeSubmitted(true);
+  };
+
   return (
     <div className="bg-white p-6 shadow-lg rounded-xl mt-6 w-full max-w-3xl mx-auto">
-
       {/* Back Button */}
       <button
         onClick={onBack}
@@ -57,7 +80,6 @@ export default function TrackShipment({ onBack }) {
       {!data && (
         <div className="mt-10 text-center">
           <p className="text-lg text-gray-600 mb-3">Enter your Booking ID</p>
-
           <div className="flex justify-center gap-3">
             <input
               type="text"
@@ -76,13 +98,11 @@ export default function TrackShipment({ onBack }) {
         </div>
       )}
 
-      {/* Timeline */}
+      {/* Timeline & Details */}
       {data && (
         <div className="mt-10">
-
           {/* Shipment Status */}
           <h3 className="text-2xl font-semibold mb-5">Shipment Status</h3>
-
           <div className="flex flex-col gap-6 ml-4 border-l-4 pl-6">
             {data.timeline.map((step, index) => (
               <div key={index} className="flex items-center gap-4">
@@ -91,7 +111,6 @@ export default function TrackShipment({ onBack }) {
                 ) : (
                   <Clock className="text-gray-400" size={28} />
                 )}
-
                 <p
                   className={`text-lg ${
                     step.done ? "font-semibold text-black" : "text-gray-500"
@@ -106,7 +125,8 @@ export default function TrackShipment({ onBack }) {
           {/* Current Status Box */}
           <div className="mt-8 p-5 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-lg">
-              📌 <span className="font-semibold">Current Status:</span> {data.status}
+              📌 <span className="font-semibold">Current Status:</span>{" "}
+              {data.status}
             </p>
           </div>
 
@@ -115,9 +135,7 @@ export default function TrackShipment({ onBack }) {
             <h3 className="text-2xl font-semibold flex items-center gap-2 text-yellow-700">
               ⭐ Rate Your Experience
             </h3>
-            <p className="text-gray-600 mb-5">Help us improve by rating!!</p>
-
-            {/* Rating */}
+            <p className="text-gray-600 mb-5">Help us improve by rating!</p>
             <p className="font-medium text-gray-800 mb-2">Your Rating</p>
 
             <div className="flex gap-2 mb-5">
@@ -134,12 +152,10 @@ export default function TrackShipment({ onBack }) {
               ))}
             </div>
 
-            {/* Show selected rating */}
             {rating > 0 && !submitted && (
               <p className="mt-2 text-gray-600">You selected: {rating} ⭐</p>
             )}
 
-            {/* Submit Button */}
             {rating > 0 && !submitted && (
               <button
                 onClick={handleSubmitRating}
@@ -149,13 +165,67 @@ export default function TrackShipment({ onBack }) {
               </button>
             )}
 
-            {/* After Rating Submitted */}
             {submitted && (
               <p className="mt-4 text-green-600 font-semibold">
                 ⭐ Thank you! Your rating has been submitted.
               </p>
             )}
           </div>
+
+          {/* Dispute Section - only visible when delivery done */}
+          {data.timeline[data.timeline.length - 1].done && (
+            <div className="bg-red-50 border border-red-200 p-6 rounded-xl mt-8">
+              <h3 className="text-2xl font-semibold flex items-center gap-2 text-red-600">
+                ⚠️ Raise a Dispute
+              </h3>
+              <p className="text-gray-600 mb-5">
+                If there is any issue with your delivery, you can upload a photo
+                and describe the defect.
+              </p>
+
+              {!disputeSubmitted && (
+                <div className="flex flex-col gap-3">
+                  {/* File Input */}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleDisputeFileChange}
+                    className="border p-2 rounded-lg"
+                  />
+
+                  {/* Description Input */}
+                  <textarea
+                    placeholder="Describe the defect or issue"
+                    value={disputeDescription}
+                    onChange={(e) => setDisputeDescription(e.target.value)}
+                    className="border p-2 rounded-lg mt-2 w-full h-24 resize-none"
+                  />
+
+                  {/* Preview */}
+                  {disputeFile && (
+                    <img
+                      src={URL.createObjectURL(disputeFile)}
+                      alt="Dispute Preview"
+                      className="w-48 h-48 object-cover rounded-lg border mt-2"
+                    />
+                  )}
+
+                  <button
+                    onClick={handleSubmitDispute}
+                    className="mt-3 bg-red-600 text-white px-6 py-3 rounded-lg"
+                  >
+                    Submit Dispute
+                  </button>
+                </div>
+              )}
+
+              {disputeSubmitted && (
+                <p className="mt-3 text-green-600 font-semibold">
+                  ✅ Dispute submitted successfully!
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

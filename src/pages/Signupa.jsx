@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { ArrowLeft, Building2 } from "lucide-react";
-import { auth, db } from "../Firebase";
+import { auth, db } from "../firebase";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import Swal from "sweetalert2"; // ⭐ POPUP ADDED
@@ -24,7 +24,12 @@ export default function SignupAgency({ onBack }) {
     address: "",
     city: "",
     pinCode: "",
-    kycUploaded: {},
+     kycUploaded: {
+      "Certificate of Incorporation": "",
+      "PAN Card of Company": "",
+      "GST Registration Certificate": "",
+    },
+
     bankAccountNumber: "",
     bankName: "",
     ifsc: "",
@@ -32,20 +37,15 @@ export default function SignupAgency({ onBack }) {
   });
 
   const handleChange = (field, value) => {
-    if (field === "phone") value = value.replace(/\D/g, "").slice(0, 10);
-    if (field === "pinCode") value = value.replace(/\D/g, "").slice(0, 6);
-    if (field === "registrationNumber" || field === "tanNumber")
-      value = value.toUpperCase();
+  if (field === "phone") value = value.replace(/\D/g, "").slice(0, 10);
+  if (field === "pinCode") value = value.replace(/\D/g, "").slice(0, 6);
+  if (field === "registrationNumber" || field === "tanNumber")
+    value = value.toUpperCase();
+  if (field === "ifsc")
+    value = value.toUpperCase(); // ⭐ ADD THIS
 
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleFileChange = (docName, file) => {
-    setFormData((prev) => ({
-      ...prev,
-      kycUploaded: { ...prev.kycUploaded, [docName]: file },
-    }));
-  };
+  setFormData((prev) => ({ ...prev, [field]: value }));
+};
 
   const slugId = (name) => name.replace(/\s+/g, "-").toLowerCase();
 
@@ -54,7 +54,53 @@ export default function SignupAgency({ onBack }) {
     { name: "PAN Card of Company", desc: "Company tax identification" },
     { name: "GST Registration Certificate", desc: "GST registration certificate" },
   ];
+  /* ---------------- CLOUDINARY UPLOAD ---------------- */
+  const uploadToCloudinary = async (file) => {
+    const data = new FormData();
+    data.append("file", file);
+    data.append("upload_preset", "movemate_upload");
 
+    const res = await fetch(
+      "https://api.cloudinary.com/v1_1/dlh1uo28j/image/upload",
+      {
+        method: "POST",
+        body: data,
+      }
+    );
+
+    const result = await res.json();
+    if (!result.secure_url) throw new Error("Upload failed");
+    return result.secure_url;
+  };
+
+  /* ---------------- KYC FILE HANDLER ---------------- */
+  const handleFileChange = async (docName, file) => {
+    if (!file) return;
+
+    Swal.fire({
+      title: "Uploading document...",
+      allowOutsideClick: false,
+      didOpen: () => Swal.showLoading(),
+    });
+
+    try {
+      const imageUrl = await uploadToCloudinary(file);
+
+      setFormData((prev) => ({
+        ...prev,
+        kycUploaded: {
+          ...prev.kycUploaded,
+          [docName]: imageUrl, // ✅ URL saved
+        },
+      }));
+
+      Swal.close();
+      Swal.fire("Uploaded", "Document uploaded successfully", "success");
+    } catch (err) {
+      Swal.close();
+      Swal.fire("Error", "Image upload failed", "error");
+    }
+  };
   const isKycUploaded =
     Object.values(formData.kycUploaded).filter((f) => f).length > 0;
 
@@ -136,19 +182,31 @@ export default function SignupAgency({ onBack }) {
 
         const uid = userCred.user.uid;
 
-        await setDoc(doc(db, "agencies", uid), {
-          ...formData,
-          createdAt: new Date(),
-        });
+        const {
+  password,
+  confirmPassword,
+  ...safeData
+} = formData;
+
+await setDoc(doc(db, "agencies", uid), {
+  ...safeData,
+  role: "agency",
+  createdAt: new Date(),
+});
+
 
         Swal.fire({
-          icon: "success",
-          title: "Registration Successful!",
-          text: "Your agency account has been created.",
-        });
+  icon: "success",
+  title: "Registration Successful!",
+  text: "Your agency account has been created.",
+  confirmButtonText: "Go to Dashboard",
+}).then(() => {
+  navigate("/agency-dashboard");
 
-        setLoading(false);
-        onBack?.();
+});
+
+setLoading(false);
+
       } catch (error) {
         console.error("❌ Signup Error:", error);
 

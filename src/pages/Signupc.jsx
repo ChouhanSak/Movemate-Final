@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { auth, db } from "../Firebase";
+import { auth, db } from "../firebase";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { User as UserIcon } from "lucide-react";
@@ -119,14 +119,16 @@ const navigate = useNavigate();
           createdAt: new Date(),
         });
 
-        Swal.fire({
-          icon: "success",
-          title: "Registration Successful!",
-          text: "Your customer account has been created.",
-        });
+        // After successful signup
+Swal.fire({
+  icon: "success",
+  title: "Registration Successful!",
+  text: "Your customer account has been created.",
+});
 
-        setLoading(false);
-        onBack();
+setLoading(false);
+onBack?.();
+
       } catch (error) {
         console.error("❌ Signup Error:", error);
 

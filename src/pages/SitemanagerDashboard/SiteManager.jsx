@@ -11,6 +11,8 @@ import ManageCustomer from "./ManageCustomer";
 import ManageAgency from "./ManageAgency"; // ✅ import ManageAgency
 import AllBookings from "./AllBookings";
 import PaymentManagement from "./paymentmanagement";
+import SiteManagerDispute from "./SiteManagerDispute";
+
 
 /* ---------- StatCard Component ---------- */
 const StatCard = ({ title, value, subtitle, gradientClass = "" }) => (
@@ -362,7 +364,7 @@ export default function SiteManager() {
         {activePage === "manageCustomer" && <ManageCustomer />}
         {activePage === "manageAgency" && <ManageAgency />}
         {activePage === "allBookings" && <AllBookings />}
-        {activePage === "disputes" && <Disputes />}
+        {activePage === "disputes" && <SiteManagerDispute />}
         {activePage === "paymentManagement" && <PaymentManagement />}
 
       </main>

@@ -12,14 +12,15 @@ export default function PrivacyPolicy() {
     <div className="w-full min-h-screen bg-gray-50 px-4 py-6">
 
       {/* ✅ BACK BUTTON — TOP LEFT */}
-      <div className="max-w-3xl mx-auto mb-4">
-        <button
-          onClick={() => navigate("/select-user")}
-          className="flex items-center gap-2 text-purple-600 hover:underline"
-        >
-          <ArrowLeft size={20} /> Back to Home
-        </button>
-      </div>
+     <div className="max-w-3xl mx-auto mb-4">
+  <button
+    onClick={() => navigate(-1)}
+    className="flex items-center gap-2 text-purple-600 hover:underline"
+  >
+    <ArrowLeft size={20} /> Back to Home
+  </button>
+</div>
+
 
       {/* ✅ PRIVACY CARD — CENTER */}
       <div className="max-w-3xl mx-auto bg-white shadow-xl rounded-2xl p-8 border space-y-8">
