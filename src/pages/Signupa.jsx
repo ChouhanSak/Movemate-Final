@@ -19,10 +19,12 @@ export default function SignupAgency({ onBack }) {
     password: "",
     confirmPassword: "",
     agencyName: "",
+    perKmRate: "",          // ADD THIS LINE for adding this charge per km
     registrationNumber: "",
     tanNumber: "",
     address: "",
     city: "",
+    state: "",
     pinCode: "",
      kycUploaded: {
       "Certificate of Incorporation": "",
@@ -141,6 +143,15 @@ export default function SignupAgency({ onBack }) {
         Swal.fire({ icon: "error", title: "Password Mismatch", text: "Passwords do not match!" });
         return;
       }
+      if (!formData.perKmRate || Number(formData.perKmRate) <= 0) {
+        Swal.fire({
+          icon: "error",
+          title: "Invalid Rate",
+          text: "Please enter a valid rate per KM!",
+        });
+        return;
+      }
+
 
       if (formData.pinCode && formData.pinCode.length !== 6) {
         Swal.fire({ icon: "error", title: "Invalid PIN Code", text: "PIN code must be 6 digits!" });
@@ -150,6 +161,7 @@ export default function SignupAgency({ onBack }) {
       setStep(2);
       return;
     }
+    
 
     // ---------------- STEP 2 VALIDATION ----------------
     if (step === 2) {
@@ -190,9 +202,11 @@ export default function SignupAgency({ onBack }) {
 
 await setDoc(doc(db, "agencies", uid), {
   ...safeData,
+  perKmRate: Number(formData.perKmRate), // ⭐ ensure number
   role: "agency",
   createdAt: new Date(),
 });
+
 
 
         Swal.fire({
@@ -264,6 +278,16 @@ setLoading(false);
   [
     { name: "agencyName", label: "Agency Name", placeholder: "Enter your agency name" },
   ],
+  // Rate per KM
+[
+  {
+    name: "perKmRate",
+    label: "Rate Per KM (₹)",
+    type: "select",
+    options: Array.from({ length: 100 }, (_, i) => i + 1), // 1 to 100
+  },
+],
+
 
   // Registration + TAN
   [
@@ -276,11 +300,21 @@ setLoading(false);
     { name: "address", label: "Business Address", placeholder: "Enter business address" },
   ],
 
-  // City + PIN
-  [
-    { name: "city", label: "City", placeholder: "Enter your city" },
-    { name: "pinCode", label: "PIN Code", placeholder: "Enter 6-digit PIN code" },
-  ],
+  // // City + PIN
+  // [
+  //   { name: "city", label: "City", placeholder: "Enter your city" },
+  //   { name: "pinCode", label: "PIN Code", placeholder: "Enter 6-digit PIN code" },
+  // ],
+  // // City + State
+[
+  { name: "city", label: "City", placeholder: "Enter your city" },
+  { name: "state", label: "State", placeholder: "Enter your state" },
+],
+
+// PIN Code
+[
+  { name: "pinCode", label: "PIN Code", placeholder: "Enter 6-digit PIN code" },
+],
 ].map((row, idx) => (
   <div
     key={idx}

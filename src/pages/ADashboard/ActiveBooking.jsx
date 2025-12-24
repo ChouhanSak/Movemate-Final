@@ -103,19 +103,16 @@ export default function ActiveBooking({ showPanel, onClose, sideNavOpen }) {
   );
 
   return (
-    <div
-      className={`fixed top-0 h-full overflow-auto bg-gray-100 shadow-xl transition-all duration-300 ${
-        sideNavOpen ? "right-[256px] w-[calc(100%-256px)]" : "right-0 w-full"
-      }`}
-    >
+            <div className="w-full min-h-screen bg-gray-100">
+
       <div className="relative min-h-screen p-6">
         {/* Close Panel */}
-        <button
+        {/* <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-500 hover:text-gray-900"
         >
           <X className="w-6 h-6" />
-        </button>
+        </button> */}
 
         <h1 className="text-3xl font-bold mb-6">Active Bookings</h1>
 
@@ -181,10 +178,11 @@ export default function ActiveBooking({ showPanel, onClose, sideNavOpen }) {
 
         {/* Booking ID Modal */}
         {modalState.type === "bookingId" && (
-          <div
-            className="fixed inset-0 flex justify-center items-center bg-black bg-opacity-50 z-[999]"
-            onClick={closeModal}
-          >
+            <div
+              className="fixed inset-0 pt-[88px] flex justify-center items-center bg-black bg-opacity-50 z-40"
+              onClick={closeModal}
+            >
+
             <div
               className="bg-white w-full max-w-sm p-6 rounded-xl shadow-2xl relative"
               onClick={(e) => e.stopPropagation()}
@@ -220,10 +218,11 @@ export default function ActiveBooking({ showPanel, onClose, sideNavOpen }) {
 
         {/* Status Update Modal */}
         {modalState.type === "status" && currentBooking && (
-          <div
-            className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-[999] p-4"
-            onClick={closeModal}
-          >
+                    <div
+              className="fixed inset-0 pt-[88px] flex items-center justify-center bg-black bg-opacity-50 z-40 p-4"
+              onClick={closeModal}
+            >
+
             <div
               className="bg-white w-full max-w-lg p-6 rounded-xl shadow-2xl relative"
               onClick={(e) => e.stopPropagation()}
