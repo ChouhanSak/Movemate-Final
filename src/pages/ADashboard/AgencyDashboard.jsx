@@ -10,47 +10,93 @@ import {
   Truck,
   CheckCircle,
   LogOut,
-  Plus,
 } from "lucide-react";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot
+} from "firebase/firestore";
 import smallTruck from "../../assets/smalltruck.png";
 import ManageVehicle from "./ManageVehicle"; // Fleet management component
 import ActiveBooking from "./ActiveBooking"; // Active bookings overlay
 import Completed from "./Completed";
 import Footer from "../../components/Footer"; 
+import { useNavigate } from "react-router-dom";
+import Swal from "sweetalert2";
+import { auth, db } from "../../firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { useEffect } from "react";
 
 export default function AgencyDashboard() {
+  const [bookingRequests, setBookingRequests] = useState([]);
+  const [agency, setAgency] = useState(null);
+const [loadingAgency, setLoadingAgency] = useState(true);
+
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [activePage, setActivePage] = useState("overview"); // overview | booking | fleet | completed
   // const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
 
-  const bookingRequests = [
-    {
-      id: "REQ001",
-      name: "John Doe",
-      phone: "+91 98765 43210",
-      from: "Mumbai, Maharashtra",
-      to: "Delhi, NCR",
-      truck: "Medium Truck (10T)",
-      weight: "8500 kg",
-      goods: "Electronics",
-      date: "Nov 12, 2025",
-      price: "₹35,000",
-    },
-    {
-      id: "REQ002",
-      name: "Sarah Williams",
-      phone: "+91 87654 32109",
-      from: "Pune, Maharashtra",
-      to: "Bangalore, Karnataka",
-      truck: "Small Truck (5T)",
-      weight: "3200 kg",
-      goods: "Furniture",
-      date: "Nov 12, 2025",
-      price: "₹18,500",
-    },
-  ];
+  useEffect(() => {
+  let unsubscribeBookings = null;
+
+  const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const docRef = doc(db, "agencies", user.uid);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setAgency({
+          name: data.agencyName || "Agency",
+          email: data.email || user.email || "",
+        });
+      }
+
+      const q = query(
+        collection(db, "bookings"),
+        where("agencyId", "==", user.uid),
+        where("status", "==", "pending")
+      );
+
+      unsubscribeBookings = onSnapshot(q, (snap) => {
+        const list = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+        setBookingRequests(list);
+      });
+
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingAgency(false);
+    }
+  });
+
+  return () => {
+    unsubscribeAuth();
+    if (unsubscribeBookings) unsubscribeBookings();
+  };
+}, []);
+
+  if (loadingAgency) {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <p className="text-lg font-semibold">Loading dashboard...</p>
+    </div>
+  );
+}
 
   return (
+    
     <div className="w-full min-h-screen flex relative bg-gray-100">
       {/* WHITE BLUR BACKGROUND OVERLAY */}
       {open && (
@@ -96,16 +142,20 @@ export default function AgencyDashboard() {
           </div>
 
           <div
-            className="flex items-center gap-3 cursor-pointer hover:text-blue-600"
-           onClick={() => {
-              setActivePage("activeBooking");
-              setOpen(false);
-}}
+  className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${
+    activePage === "activeBooking"
+      ? "text-purple-600 font-semibold"
+      : ""
+  }`}
+  onClick={() => {
+    setActivePage("activeBooking");
+    setOpen(false);
+  }}
+>
+  <Truck className="w-5 h-5" />
+  Active Bookings
+</div>
 
-          >
-            <Truck className="w-5 h-5" />
-            Active Bookings
-          </div>
 
           <div
             className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${activePage === "completed" ? "text-purple-600 font-semibold" : ""}`}
@@ -133,12 +183,34 @@ export default function AgencyDashboard() {
           <div
             className="flex items-center gap-3 cursor-pointer hover:text-red-600"
             onClick={() => {
-              const confirmLogout = window.confirm("Are you sure you want to logout?");
-              if (confirmLogout) {
-                console.log("Agency logged out!");
-                window.location.href = "/login"; 
-              }
-            }}
+  Swal.fire({
+    title: "Logout?",
+    text: "Are you sure you want to logout?",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonColor: "#7c3aed",
+    cancelButtonColor: "#d33",
+    confirmButtonText: "Yes, Logout",
+  }).then((result) => {
+    if (result.isConfirmed) {
+      // 🔥 optional: Firebase signout later
+      // await signOut(auth);
+
+      Swal.fire({
+        icon: "success",
+        title: "Logged out",
+        text: "You have been logged out successfully",
+        timer: 1500,
+        showConfirmButton: false,
+      });
+
+      setTimeout(() => {
+        navigate("/select-user"); // ✅ SELECT USER PAGE
+      }, 1500);
+    }
+  });
+}}
+
           >
             <LogOut className="w-5 h-5" />
             Logout
@@ -174,15 +246,18 @@ export default function AgencyDashboard() {
           className="w-12 h-12 rounded-full text-white flex items-center justify-center font-semibold"
           style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
         >
-          SL
+          {agency?.name?.slice(0, 2).toUpperCase()}
+
         </div>
 
         <div>
           <h1 className="text-lg font-semibold text-gray-900">
-            Swift Logistics
+           {agency?.name}
+
           </h1>
           <p className="text-xs text-gray-500 -mt-1">
-            swift@logistics.com
+            {agency?.email}
+
           </p>
         </div>
 
@@ -216,7 +291,10 @@ export default function AgencyDashboard() {
           <>
             {/* Overview Header */}
             <div className="mb-12">
-              <h1 className="text-3xl font-bold flex items-center gap-2">Welcome back, Swift Logistics! 👋</h1>
+              <h1 className="text-3xl font-bold flex items-center gap-2">
+  Welcome back, {agency?.name}! 👋
+</h1>
+
               <p className="text-gray-500 mt-1">Manage your bookings and grow your transportation business</p>
             </div>
 

@@ -1,59 +1,116 @@
 import React, { useState } from "react";
 import { Plus, X, Truck, Trash2 } from "lucide-react";
+import { auth, db } from "../../firebase";
+import { collection, addDoc, query, where, getDocs, deleteDoc, doc, getDoc } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
+import { useEffect } from "react";
+import Swal from "sweetalert2";
 
 export default function ManageVehicle() {
+  
   const [showAddVehicle, setShowAddVehicle] = useState(false);
-  const [vehicles, setVehicles] = useState([
-    { id: "V001", type: "Small Truck (5T)", capacity: 5000, license: "MH-02-AB-1234", status: "Available" }, 
-    { id: "V002", type: "Medium Truck (10T)", capacity: 10000, license: "MH-02-AB-5678", status: "Available" },
-    { id: "V003", type: "Large Truck (20T)", capacity: 20000, license: "MH-02-AB-9012", status: "Not Available" },
-  ]);
-  const [form, setForm] = useState({ id: "", type: "", capacity: "", license: "" });
+ const [vehicles, setVehicles] = useState([]);
+const [agency, setAgency] = useState(null);
+
+  const [form, setForm] = useState({ type: "", capacity: "", license: "" });
   const [message, setMessage] = useState("");
 
-  // Add Vehicle
-  const handleAddVehicle = () => {
-    if (!form.id || !form.type || !form.capacity || !form.license) {
-      setMessage("All fields are mandatory!");
-      setTimeout(() => setMessage(""), 3000);
-      return;
-    }
-
-    const formattedLicense = form.license
-      .replace(/[^a-zA-Z0-9]/g, "")
-      .match(/^([a-zA-Z]{2})(\d{2})([a-zA-Z]{2})(\d{4})$/);
-
-    const displayLicense = formattedLicense
-      ? `${formattedLicense[1].toUpperCase()}-${formattedLicense[2]}-${formattedLicense[3].toUpperCase()}-${formattedLicense[4]}`
-      : form.license.toUpperCase();
-
-    const newVehicle = {
-      id: form.id,
-      type: form.type,
-      capacity: parseInt(form.capacity),
-      license: displayLicense,
-      status: "Available",
-    };
-
-    setVehicles([...vehicles, newVehicle]);
-    setForm({ id: "", type: "", capacity: "", license: "" });
-    setShowAddVehicle(false);
-    setMessage(`Vehicle ${newVehicle.license} added successfully!`);
-    setTimeout(() => setMessage(""), 3000);
-  };
-
   // Delete Vehicle
-  const handleDeleteVehicle = (vehicleId, license) => {
-    setVehicles(vehicles.filter((v) => v.id !== vehicleId));
-    setMessage(`Vehicle ${license} (ID: ${vehicleId}) deleted successfully!`);
+  const handleDeleteVehicle = async (vehicleId, license) => {
+  // SweetAlert2 confirmation
+  const result = await Swal.fire({
+    title: `Delete ${license}?`,
+    text: "You won't be able to revert this!",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonColor: "#d33",
+    cancelButtonColor: "#3085d6",
+    confirmButtonText: "Yes, delete it!",
+    cancelButtonText: "Cancel",
+  });
+
+  if (result.isConfirmed) {
+    // delete document
+    await deleteDoc(doc(db, "vehicles", vehicleId));
+    setVehicles(vehicles.filter(v => v.id !== vehicleId));
+    setMessage("Vehicle deleted successfully!");
     setTimeout(() => setMessage(""), 3000);
-  };
+
+    // success alert
+    Swal.fire("Deleted!", `${license} has been deleted.`, "success");
+  }
+};
+
+
+    const handleAddVehicle = async () => {
+  if (!form.type || !form.capacity || !form.license) {
+    setMessage("All fields are mandatory!");
+    setTimeout(() => setMessage(""), 3000);
+    return;
+  }
+
+  try {
+    const docRef = await addDoc(collection(db, "vehicles"), {
+      agencyId: auth.currentUser.uid,          // 🔥 IMPORTANT
+      agencyName: agency.agencyName,            // 🔥 AUTO
+      type: form.type,
+      capacity: Number(form.capacity),
+      license: form.license.toUpperCase(),
+      status: "Available",
+      createdAt: new Date(),
+    });
+
+    setVehicles([...vehicles, { id: docRef.id, ...form, status: "Available" }]);
+    setShowAddVehicle(false);
+    setForm({ id: "", type: "", capacity: "", license: "" });
+    setMessage("Vehicle added successfully!");
+  } catch (err) {
+    setMessage("Error adding vehicle");
+  }
+};
+
 
   const getStatusStyle = (status) => {
     if (status === "Available") return "bg-green-100 text-green-700";
     if (status === "Not Available") return "bg-gray-200 text-gray-700";
     return "bg-yellow-100 text-yellow-700";
   };
+ useEffect(() => {
+  const unsub = onAuthStateChanged(auth, async (user) => {
+    if (!user) return;
+
+    // get agency data
+    const agencyRef = doc(db, "agencies", user.uid);
+    const agencySnap = await getDoc(agencyRef);
+    if (agencySnap.exists()) {
+      setAgency(agencySnap.data());
+    }
+
+    // get vehicles of this agency
+    const q = query(
+      collection(db, "vehicles"),
+      where("agencyId", "==", user.uid)
+    );
+    const snap = await getDocs(q);
+    const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // ✅ Check bookings for each vehicle
+    const bookingsSnap = await getDocs(collection(db, "bookings"));
+    const bookings = bookingsSnap.docs.map(d => d.data());
+
+    const updatedList = list.map(vehicle => {
+      const isBooked = bookings.some(
+        b => b.vehicleId === vehicle.id && b.status === "Booked"
+      );
+      return { ...vehicle, status: isBooked ? "Not Available" : "Available" };
+    });
+
+    setVehicles(updatedList);
+  });
+
+  return () => unsub();
+}, []);
+
 
   return (
     <div className="p-6 bg-white min-h-screen">
@@ -104,12 +161,13 @@ export default function ManageVehicle() {
             <div className="mt-6 flex justify-end gap-4">
               {/* Delete Button */}
               <button
-                onClick={() => handleDeleteVehicle(v.id, v.license)}
-                className="p-3 border rounded-lg text-red-500 hover:bg-red-50 transition-colors"
-                title={`Delete ${v.license}`}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+  onClick={() => handleDeleteVehicle(v.id, v.license)}
+  className="p-3 border rounded-lg text-red-500 hover:bg-red-50 transition-colors"
+  title={`Delete ${v.license}`}
+>
+  <Trash2 className="w-4 h-4" />
+</button>
+
             </div>
           </div>
         ))}
@@ -124,16 +182,6 @@ export default function ManageVehicle() {
               <X className="w-6 h-6 cursor-pointer text-gray-500 hover:text-gray-800" onClick={() => setShowAddVehicle(false)} />
             </div>
             <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700">Vehicle ID</label>
-                <input
-                  type="text"
-                  className="w-full mt-1 p-2 border border-gray-300 rounded-lg"
-                  placeholder="e.g., V004"
-                  value={form.id}
-                  onChange={(e) => setForm({ ...form, id: e.target.value.toUpperCase() })}
-                />
-              </div>
               <div>
                 <label className="text-sm font-medium text-gray-700">Vehicle Type</label>
                 <input

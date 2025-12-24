@@ -1,6 +1,6 @@
 // src/pages/agency-dashboard/AgencyDashboard.jsx
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { 
   Home, Users, Building, Box, AlertTriangle, DollarSign, LogOut, X as XIcon, Menu, Bell as BellIcon, 
   BarChart3, Activity, Clock, Truck, CheckCircle 
@@ -12,9 +12,11 @@ import ManageAgency from "./ManageAgency"; // ✅ import ManageAgency
 import AllBookings from "./AllBookings";
 import PaymentManagement from "./paymentmanagement";
 import SiteManagerDispute from "./SiteManagerDispute";
-
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "../../firebase";
 
 /* ---------- StatCard Component ---------- */
+
 const StatCard = ({ title, value, subtitle, gradientClass = "" }) => (
   <div
     className={`rounded-2xl p-6 text-white shadow-lg ${gradientClass} relative min-w-[190px]`}
@@ -132,7 +134,16 @@ export default function SiteManager() {
   const [activePage, setActivePage] = useState("overview");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
+   const [userEmail, setUserEmail] = useState("");
 
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserEmail(user.email);
+      }
+    });
+    return () => unsub();
+  }, []);
   const stats = useMemo(
     () => ({
       pendingKYC: 3,
@@ -252,11 +263,12 @@ export default function SiteManager() {
                 className="w-12 h-12 rounded-full text-white flex items-center justify-center font-semibold"
                 style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
               >
-                SL
+                SM
               </div>
               <div>
-                <h1 className="text-lg font-semibold text-gray-900">Swift Logistics</h1>
-                <p className="text-xs text-gray-500 -mt-1">swift@logistics.com</p>
+               <h1 className="text-lg font-semibold text-gray-900">Site Manager</h1>
+<p className="text-xs text-gray-500 -mt-1">{userEmail}</p>
+
               </div>
               <div className="w-px h-8 bg-gray-300 mx-4" />
               <BellIcon className="w-6 h-6 text-gray-700 cursor-pointer ml-4" />
@@ -281,7 +293,7 @@ export default function SiteManager() {
         {activePage === "overview" && (
           <>
             <div className="mb-12">
-              <h1 className="text-3xl font-bold flex items-center gap-2">Welcome back, Swift Logistics! 👋</h1>
+              <h1 className="text-3xl font-bold flex items-center gap-2">Welcome back, Site Manager! 👋</h1>
               <p className="text-gray-500 mt-1">Manage your bookings and grow your transportation business</p>
             </div>
 
