@@ -124,10 +124,13 @@ Swal.fire({
   icon: "success",
   title: "Registration Successful!",
   text: "Your customer account has been created.",
+}).then(() => {
+  navigate("/customer-dashboard");
 });
 
+
 setLoading(false);
-onBack?.();
+
 
       } catch (error) {
         console.error("❌ Signup Error:", error);

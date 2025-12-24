@@ -21,7 +21,7 @@ import Footer from "../../components/Footer";
 export default function AgencyDashboard() {
   const [open, setOpen] = useState(false);
   const [activePage, setActivePage] = useState("overview"); // overview | booking | fleet | completed
-  const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
+  // const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
 
   const bookingRequests = [
     {
@@ -74,7 +74,11 @@ export default function AgencyDashboard() {
         <div className="space-y-5 text-gray-700 text-lg">
           <div
             className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${activePage === "overview" ? "text-purple-600 font-semibold" : ""}`}
-            onClick={() => setActivePage("overview")}
+            onClick={() => {
+            setActivePage("overview");
+            setOpen(false);
+          }}
+
           >
             <Home className="w-5 h-5" />
             Overview
@@ -82,7 +86,10 @@ export default function AgencyDashboard() {
 
           <div
             className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${activePage === "booking" ? "text-purple-600 font-semibold" : ""}`}
-            onClick={() => setActivePage("booking")}
+            onClick={() => {
+            setActivePage("booking");
+            setOpen(false);
+          }}
           >
             <Clock className="w-5 h-5" />
             Booking Requests
@@ -90,7 +97,11 @@ export default function AgencyDashboard() {
 
           <div
             className="flex items-center gap-3 cursor-pointer hover:text-blue-600"
-            onClick={() => setShowActiveBookingPanel(true)}
+           onClick={() => {
+              setActivePage("activeBooking");
+              setOpen(false);
+}}
+
           >
             <Truck className="w-5 h-5" />
             Active Bookings
@@ -98,7 +109,10 @@ export default function AgencyDashboard() {
 
           <div
             className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${activePage === "completed" ? "text-purple-600 font-semibold" : ""}`}
-            onClick={() => setActivePage("completed")}
+           onClick={() => {
+          setActivePage("completed");
+          setOpen(false);
+        }}
           >
             <CheckCircle className="w-5 h-5" />
             Completed
@@ -106,7 +120,11 @@ export default function AgencyDashboard() {
 
           <div
             className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${activePage === "fleet" ? "text-purple-600 font-semibold" : ""}`}
-            onClick={() => setActivePage("fleet")}
+            onClick={() => {
+            setActivePage("fleet");
+            setOpen(false);
+          }}
+
           >
             <Truck className="w-5 h-5" />
             Manage Vehicle
@@ -129,45 +147,69 @@ export default function AgencyDashboard() {
       </div>
 
       {/* ---------------- Main Content ---------------- */}
-      <div
-        className={`flex-1 p-6 transition-all duration-300`}
-        style={{ marginLeft: open ? "16rem" : "0" }}
+     <div
+      className="flex-1 pt-24 px-6 transition-all duration-300"
+      style={{ marginLeft: open ? "16rem" : "0" }}
       >
-        {/* ---------------- Top Bar ---------------- */}
-        <div className="w-full bg-white shadow-sm px-6 py-3 flex justify-between items-center rounded-2xl mb-6">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setOpen(true)}>
-              <Menu className="w-7 h-7 text-gray-700" />
-            </button>
-            <div className="flex items-center gap-3">
-              <div
-                className="w-12 h-12 rounded-full text-white flex items-center justify-center font-semibold"
-                style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
-              >
-                SL
-              </div>
-              <div>
-                <h1 className="text-lg font-semibold text-gray-900">Swift Logistics</h1>
-                <p className="text-xs text-gray-500 -mt-1">swift@logistics.com</p>
-              </div>
-              <div className="w-px h-8 bg-gray-300 mx-4" />
-              <BellIcon className="w-6 h-6 text-gray-700 cursor-pointer ml-4" />
-            </div>
-          </div>
 
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <p className="text-lg font-semibold text-gray-900">MoveMate</p>
-              <p className="text-sm text-gray-500 -mt-1">Goods Transportation Platform</p>
-            </div>
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center"
-              style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
-            >
-              <img src={smallTruck} alt="Truck" className="w-6 h-6" />
-            </div>
-          </div>
+        {/* ---------------- Top Bar ---------------- */}
+<div
+  className="fixed top-0 bg-white shadow-sm px-6 py-3 z-50 transition-all duration-300"
+  style={{
+    left: open ? "16rem" : "0",
+    width: open ? "calc(100% - 16rem)" : "100%",
+  }}
+>
+  {/* ✅ SINGLE FLEX ROW */}
+  <div className="flex items-center justify-between w-full flex-nowrap">
+
+    {/* LEFT SIDE */}
+    <div className="flex items-center gap-4">
+      <button onClick={() => setOpen(true)}>
+        <Menu className="w-7 h-7 text-gray-700" />
+      </button>
+
+      <div className="flex items-center gap-3">
+        <div
+          className="w-12 h-12 rounded-full text-white flex items-center justify-center font-semibold"
+          style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
+        >
+          SL
         </div>
+
+        <div>
+          <h1 className="text-lg font-semibold text-gray-900">
+            Swift Logistics
+          </h1>
+          <p className="text-xs text-gray-500 -mt-1">
+            swift@logistics.com
+          </p>
+        </div>
+
+        <div className="w-px h-8 bg-gray-300 mx-4" />
+        <BellIcon className="w-6 h-6 text-gray-700 cursor-pointer ml-4" />
+      </div>
+    </div>
+
+    {/* RIGHT SIDE */}
+    <div className="flex items-center gap-3 whitespace-nowrap">
+      <div className="text-right">
+        <p className="text-lg font-semibold text-gray-900">MoveMate</p>
+        <p className="text-sm text-gray-500 -mt-1">
+          Goods Transportation Platform
+        </p>
+      </div>
+
+      <div
+        className="w-10 h-10 rounded-xl flex items-center justify-center"
+        style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
+      >
+        <img src={smallTruck} alt="Truck" className="w-6 h-6" />
+      </div>
+    </div>
+
+  </div>
+</div>
 
         {/* ---------------- Page Content ---------------- */}
         {activePage === "overview" && (
@@ -297,18 +339,28 @@ export default function AgencyDashboard() {
 
         {activePage === "fleet" && <ManageVehicle />}
         {activePage === "completed" && <Completed />}
+        {activePage === "activeBooking" && (
+        <ActiveBooking
+          showPanel={true}
+          onClose={() => setActivePage("overview")}
+          sideNavOpen={open}
+        />
+)}
+
 
        {/* IMPORTED FOOTER */}
              <Footer />
       </div>
 
       {/* ---------------- Active Booking Overlay ---------------- */}
-      {showActiveBookingPanel && (
-        <ActiveBooking 
-          showPanel={true} 
-          onClose={() => setShowActiveBookingPanel(false)} 
-        />
-      )}
+      {/* {showActiveBookingPanel && (
+      <ActiveBooking 
+        showPanel={true}
+        onClose={() => setShowActiveBookingPanel(false)}
+        sideNavOpen={open}   // ✅ THIS IS THE KEY FIX
+      />
+    )} */}
+
     </div>
   );
 }
