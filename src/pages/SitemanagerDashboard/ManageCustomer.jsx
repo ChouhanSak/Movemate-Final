@@ -13,6 +13,7 @@ export default function ManageCustomer() {
   const [allCustomers, setAllCustomers] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
 
   /* ---------------- FETCH CUSTOMERS ---------------- */
   useEffect(() => {
@@ -30,17 +31,22 @@ export default function ManageCustomer() {
   };
 
   /* ---------------- SEARCH ---------------- */
-  const handleSearch = () => {
-    if (!search.trim()) {
-      setCustomers(allCustomers);
-      return;
-    }
+  const handleSearch = (query = search) => {
+  setSearch(query);
 
-    const filtered = allCustomers.filter((c) =>
-      c.fullName.toLowerCase().includes(search.toLowerCase())
-    );
-    setCustomers(filtered);
-  };
+  if (!query.trim()) {
+    setSuggestions([]);
+    setCustomers(allCustomers);
+    return;
+  }
+
+  const filtered = allCustomers.filter((c) =>
+    c.fullName.toLowerCase().includes(query.toLowerCase())
+  );
+
+  setCustomers(filtered);
+  setSuggestions(filtered.slice(0, 10));
+};
 
   /* ---------------- ACTIONS ---------------- */
   const handleAction = async (customer, action) => {
@@ -98,18 +104,52 @@ export default function ManageCustomer() {
               className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-500"
             />
             <Input
-              placeholder="Search customers..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-12 pl-10 pr-4 w-64 rounded-xl shadow-sm"
-            />
+  placeholder="Search customers..."
+  value={search}
+  onChange={(e) => handleSearch(e.target.value)}
+  className="h-12 pl-10 pr-4 w-64 rounded-xl shadow-sm"
+/>
+{suggestions.length > 0 && (
+  <ul className="absolute mt-1 bg-white border border-gray-300 rounded-lg w-64 shadow-lg z-10 max-h-60 overflow-auto">
+    {suggestions.map((c) => {
+      const startIndex = c.fullName.toLowerCase().indexOf(search.toLowerCase());
+      const endIndex = startIndex + search.length;
+
+      return (
+        <li
+          key={c.id}
+          className="px-4 py-2 cursor-pointer hover:bg-purple-100"
+          onClick={() => {
+            setSearch(c.fullName);
+            setSuggestions([]);
+            setCustomers([c]); // select the clicked suggestion
+          }}
+        >
+          {startIndex >= 0 ? (
+            <>
+              {c.fullName.substring(0, startIndex)}
+              <span className="bg-yellow-200">
+                {c.fullName.substring(startIndex, endIndex)}
+              </span>
+              {c.fullName.substring(endIndex)}
+            </>
+          ) : (
+            c.fullName
+          )}
+        </li>
+      );
+    })}
+  </ul>
+)}
+
           </div>
-          <Button
-            onClick={handleSearch}
-            className="h-12 px-6 bg-purple-600 hover:bg-purple-700 text-white rounded-xl"
-          >
-            Search
-          </Button>
+         <Button
+  onClick={() => handleSearch(search)}
+  className="h-12 px-6 bg-purple-600 hover:bg-purple-700 text-white rounded-xl"
+>
+  Search
+</Button>
+
         </div>
       </div>
 

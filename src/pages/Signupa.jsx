@@ -11,6 +11,21 @@ export default function SignupAgency({ onBack }) {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
+  const res = await fetch("http://localhost:5000/verify-kyc", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      imageUrl,
+      name: fullName,
+      docType,
+      userType: "agency",
+    }),
+  });
+
+  const data = await res.json();
+  return data.verified ? "AUTO_VERIFIED" : "MANUAL_REVIEW";
+};
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -26,11 +41,11 @@ export default function SignupAgency({ onBack }) {
     city: "",
     state: "",
     pinCode: "",
-     kycUploaded: {
-      "Certificate of Incorporation": "",
-      "PAN Card of Company": "",
-      "GST Registration Certificate": "",
-    },
+    kycUploaded: {
+  "Aadhar Card": "",
+  "PAN Card": "",
+},
+
 
     bankAccountNumber: "",
     bankName: "",
@@ -51,11 +66,11 @@ export default function SignupAgency({ onBack }) {
 
   const slugId = (name) => name.replace(/\s+/g, "-").toLowerCase();
 
-  const kycOptions = [
-    { name: "Certificate of Incorporation", desc: "Company registration certificate" },
-    { name: "PAN Card of Company", desc: "Company tax identification" },
-    { name: "GST Registration Certificate", desc: "GST registration certificate" },
-  ];
+ const kycOptions = [
+  { name: "Aadhar Card", desc: "Owner Aadhaar (person filling the form)" },
+  { name: "PAN Card", desc: "Owner PAN Card" },
+];
+
   /* ---------------- CLOUDINARY UPLOAD ---------------- */
   const uploadToCloudinary = async (file) => {
     const data = new FormData();
@@ -165,6 +180,7 @@ export default function SignupAgency({ onBack }) {
 
     // ---------------- STEP 2 VALIDATION ----------------
     if (step === 2) {
+      // 🔍 1️⃣ Uploaded document nikalo (Aadhaar ya PAN)
       if (!isKycUploaded) {
         Swal.fire({
           icon: "error",
@@ -182,6 +198,22 @@ export default function SignupAgency({ onBack }) {
         });
         return;
       }
+      const uploadedEntry = Object.entries(formData.kycUploaded)
+  .find(([_, url]) => url);
+
+if (!uploadedEntry) {
+  Swal.fire("Error", "Please upload Aadhaar or PAN", "error");
+  return;
+}
+
+const [docType, imageUrl] = uploadedEntry;
+
+// 🔍 2️⃣ OCR verification call
+const kycStatus = await verifyKycWithBackend(
+  imageUrl,
+  formData.fullName,
+  docType
+);
 
       try {
         setLoading(true);
@@ -204,6 +236,7 @@ await setDoc(doc(db, "agencies", uid), {
   ...safeData,
   perKmRate: Number(formData.perKmRate), // ⭐ ensure number
   role: "agency",
+  kycStatus, 
   createdAt: new Date(),
 });
 
@@ -281,12 +314,14 @@ setLoading(false);
   // Rate per KM
 [
   {
-    name: "perKmRate",
+     name: "perKmRate",
     label: "Rate Per KM (₹)",
-    type: "select",
-    options: Array.from({ length: 100 }, (_, i) => i + 1), // 1 to 100
+    type: "number",
+    placeholder: "Enter rate per km",
+    min: 1,   
   },
 ],
+
 
 
   // Registration + TAN

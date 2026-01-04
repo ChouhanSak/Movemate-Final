@@ -11,11 +11,16 @@ import {
   CheckCircle,
   LogOut,
 } from "lucide-react";
+import { Phone, Package, Weight, MapPin,
+  Eye,
+  Check,
+   } from "lucide-react";
 import {
   collection,
   query,
   where,
-  onSnapshot
+  onSnapshot,
+  updateDoc
 } from "firebase/firestore";
 import smallTruck from "../../assets/smalltruck.png";
 import ManageVehicle from "./ManageVehicle"; // Fleet management component
@@ -27,17 +32,188 @@ import Swal from "sweetalert2";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import BookingDetails from "./BookingDetails";
+import AssignBookingModal from "./AssignBookingModal";
+import { serverTimestamp } from "firebase/firestore";
+import { orderBy, limit } from "firebase/firestore";
+import { calculatePrice } from "../../utils/priceUtils";
+function timeAgo(timestamp) {
+  if (!timestamp) return "";
+
+  const now = new Date();
+  const date = timestamp.toDate();
+  const seconds = Math.floor((now - date) / 1000);
+
+  const intervals = [
+    { label: "year", seconds: 31536000 },
+    { label: "month", seconds: 2592000 },
+    { label: "day", seconds: 86400 },
+    { label: "hour", seconds: 3600 },
+    { label: "minute", seconds: 60 },
+  ];
+
+  for (const interval of intervals) {
+    const count = Math.floor(seconds / interval.seconds);
+    if (count >= 1) {
+      return `${count} ${interval.label}${count > 1 ? "s" : ""} ago`;
+    }
+  }
+
+  return "just now";
+}
+function isPaymentExpired(priceSetAt) {
+  if (!priceSetAt) return false;
+  const expiryTime = 1000 * 60 * 60 * 5; // 5 hours in ms
+  const now = new Date().getTime();
+  const priceTime = priceSetAt.toDate().getTime();
+  return now - priceTime > expiryTime;
+}
 
 export default function AgencyDashboard() {
   const [bookingRequests, setBookingRequests] = useState([]);
   const [agency, setAgency] = useState(null);
 const [loadingAgency, setLoadingAgency] = useState(true);
+const [showDetails, setShowDetails] = useState(false);
+const [selectedBooking, setSelectedBooking] = useState(null);
+const [showAssignModal, setShowAssignModal] = useState(false);
+const [assignBooking, setAssignBooking] = useState(null);
+const [notifications, setNotifications] = useState([]);
+const [showNotifications, setShowNotifications] = useState(false);
+const notifRef = useRef(null);
+const agencyId = auth.currentUser?.uid;
+const [kycStatus, setKycStatus] = useState(null);
+useEffect(() => {
+  if (!auth.currentUser) return;
+
+  const unsub = onSnapshot(doc(db, "agencies", auth.currentUser.uid), (snap) => {
+    if (snap.exists()) {
+      const data = snap.data();
+      setKycStatus(data.kycStatus);
+    }
+  });
+
+  return () => unsub();
+}, []);
+
+
+ // must match Firestore field
+const [recentActivity, setRecentActivity] = useState([]);
+
+useEffect(() => {
+  if (!auth.currentUser) return;
+
+  // 🔹 Real-time notifications listener
+  const q = query(
+    collection(db, "notifications"),
+    where("agencyId", "==", auth.currentUser.uid),
+  );
+const unsubscribe = onSnapshot(q, (snapshot) => {
+  const notifList = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+  console.log("Notifications:", notifList);
+  setNotifications(notifList);
+});
+
+
+  return () => unsubscribe();
+}, []);
+useEffect(() => {
+  if (!auth.currentUser) return;
+
+  const q = query(
+    collection(db, "bookings"),
+    where("agencyId", "==", auth.currentUser.uid),
+    orderBy("updatedAt", "desc"),
+    limit(5)
+  );
+
+  const unsubscribe = onSnapshot(q, (snap) => {
+    const activities = [];
+
+    snap.docs.forEach((docSnap) => {
+      const b = docSnap.data();
+      const id = docSnap.id;
+
+      if (b.completedAt) {
+        activities.push({
+          type: "DELIVERED",
+          label: "Status updated to delivered",
+          ref: id,
+          time: b.completedAt,
+        });
+      } else if (b.paymentAt) {
+        activities.push({
+          type: "PAYMENT",
+          label: "Payment received",
+          ref: `₹${b.price}`,
+          time: b.paymentAt,
+        });
+      } else if (b.acceptedAt) {
+        activities.push({
+          type: "ACCEPTED",
+          label: "Booking accepted",
+          ref: id,
+          time: b.acceptedAt,
+        });
+      } else {
+        activities.push({
+          type: "NEW",
+          label: "New request received",
+          ref: id,
+          time: b.createdAt,
+        });
+      }
+    });
+
+    setRecentActivity(activities.slice(0, 4));
+  });
+
+  return () => unsubscribe();
+}, []);
+useEffect(() => {
+  const handleClickOutside = (event) => {
+    if (notifRef.current && !notifRef.current.contains(event.target)) {
+      setShowNotifications(false);
+    }
+  };
+  document.addEventListener("mousedown", handleClickOutside);
+  return () => document.removeEventListener("mousedown", handleClickOutside);
+}, []);
 
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [activePage, setActivePage] = useState("overview"); // overview | booking | fleet | completed
   // const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
+const handleReject = async (bookingId) => {
+  const result = await Swal.fire({
+    title: "Are you sure?",
+    text: "Do you want to reject this booking?",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonColor: "#d33",
+    cancelButtonColor: "#3085d6",
+    confirmButtonText: "Yes, Reject",
+    cancelButtonText: "Cancel",
+  });
+
+  if (!result.isConfirmed) return;
+
+  try {
+    await updateDoc(doc(db, "bookings", bookingId), {
+      status: "Rejected",
+      rejectedAt: new Date(),
+    });
+
+    Swal.fire("Rejected!", "Booking has been rejected", "success");
+  } catch (err) {
+    console.error(err);
+    Swal.fire("Error", "Unable to reject booking", "error");
+  }
+};
+
 
   useEffect(() => {
   let unsubscribeBookings = null;
@@ -59,20 +235,27 @@ const [loadingAgency, setLoadingAgency] = useState(true);
           email: data.email || user.email || "",
         });
       }
+const q = query(
+  collection(db, "bookings"),
+  where("agencyId", "==", user.uid),
+  where("status", "in", [
+    "PENDING",
+    "pending",
+    "WAITING_FOR_PAYMENT",
+    "PAYMENT_PENDING",
+    "PAYMENT_CONFIRMED"   
+  ])
+);
 
-      const q = query(
-        collection(db, "bookings"),
-        where("agencyId", "==", user.uid),
-        where("status", "==", "pending")
-      );
 
-      unsubscribeBookings = onSnapshot(q, (snap) => {
-        const list = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
-        setBookingRequests(list);
-      });
+unsubscribeBookings = onSnapshot(q, (snap) => {
+  const list = snap.docs.map((d) => ({
+    id: d.id,
+    ...d.data(),
+  }));
+  setBookingRequests(list);
+});
+
 
     } catch (err) {
       console.error(err);
@@ -223,7 +406,12 @@ const [loadingAgency, setLoadingAgency] = useState(true);
       className="flex-1 pt-24 px-6 transition-all duration-300"
       style={{ marginLeft: open ? "16rem" : "0" }}
       >
-
+      {kycStatus === "MANUAL_REVIEW" && (
+  <div className="mb-4 p-4 rounded-lg bg-yellow-100 border border-yellow-400 text-yellow-800">
+    ⚠ Your account is under verification.  
+    You cannot accept bookings until verification is complete.
+  </div>
+)}
         {/* ---------------- Top Bar ---------------- */}
 <div
   className="fixed top-0 bg-white shadow-sm px-6 py-3 z-50 transition-all duration-300"
@@ -262,10 +450,48 @@ const [loadingAgency, setLoadingAgency] = useState(true);
         </div>
 
         <div className="w-px h-8 bg-gray-300 mx-4" />
-        <BellIcon className="w-6 h-6 text-gray-700 cursor-pointer ml-4" />
+<div className="relative ml-4">
+  <button onClick={() => setShowNotifications(!showNotifications)}>
+    <BellIcon className="w-6 h-6 text-gray-700 cursor-pointer" />
+    {notifications.some(n => !n.read) && (
+      <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full" />
+    )}
+  </button>
+
+  {showNotifications && (
+    <div
+      ref={notifRef}
+      className="absolute right-0 mt-2 w-72 bg-white shadow-lg rounded-lg z-50 overflow-hidden p-3"
+    >
+      {notifications.length === 0 ? (
+        <div className="p-4 text-gray-500">No notifications</div>
+      ) : (
+        notifications.map((n) => (
+          <div
+            key={n.id}
+            className={`p-2 rounded mb-2 text-sm ${
+              n.read ? "bg-gray-100" : "bg-purple-50"
+            }`}
+            onClick={async () => {
+              if (!n.read) {
+                const notifDocRef = doc(db, "notifications", n.id);
+                await updateDoc(notifDocRef, { read: true });
+              }
+            }}
+          >
+            🔔 {n.message}
+            <div className="text-xs text-gray-400 mt-1">
+              {n.createdAt?.toDate().toLocaleString()}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  )}
+</div>
+
       </div>
     </div>
-
     {/* RIGHT SIDE */}
     <div className="flex items-center gap-3 whitespace-nowrap">
       <div className="text-right">
@@ -394,22 +620,241 @@ const [loadingAgency, setLoadingAgency] = useState(true);
             </div>
             <p className="text-gray-500 mb-2">Review and accept new booking requests from customers</p>
             <div className="space-y-4">
-              {bookingRequests.map((req) => (
+              
+              {bookingRequests.map((req) =>(
+      
                 <div key={req.id} className="bg-gray-50 p-4 rounded-xl shadow-sm">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-yellow-500 font-semibold">New Request</span>
-                    <span className="text-gray-400 text-sm">{req.id} • {req.date}</span>
-                  </div>
-                  <p className="font-medium">{req.name} • {req.phone}</p>
-                  <p className="text-sm text-gray-500">{req.from} → {req.to}</p>
-                  <p className="text-sm text-gray-500">{req.truck} • {req.weight} • {req.goods}</p>
-                  <p className="font-semibold text-right mt-1">{req.price}</p>
-                  <div className="flex gap-2 mt-2">
-                    <button className="px-3 py-1 bg-gray-200 rounded-lg text-sm">View Details</button>
-                    <button className="px-3 py-1 bg-red-500 text-white rounded-lg text-sm">Reject</button>
-                    <button className="px-3 py-1 bg-green-500 text-white rounded-lg text-sm">Accept & Assign</button>
-                  </div>
-                </div>
+                  <div className="flex items-center justify-between mb-0">
+  {/* LEFT : STATUS */}
+  <span className="flex items-center gap-2 font-semibold text-sm">
+    <span
+      className={
+        req.status === "PAYMENT_CONFIRMED"
+          ? "text-green-600"
+          : req.status === "PAYMENT_PENDING"
+          ? isPaymentExpired(req.priceSetAt)
+            ? "text-red-600"
+            : "text-blue-600"
+          : "text-yellow-600"
+      }
+    >
+      {req.status === "PAYMENT_CONFIRMED"
+        ? "Payment Confirmed"
+        : req.status === "PAYMENT_PENDING"
+        ? isPaymentExpired(req.priceSetAt)
+          ? "Booking Expired"
+          : "Waiting for Payment"
+        : "New Request"}
+    </span>
+
+    <span className="text-gray-400 font-normal text-xs">
+      • {timeAgo(req.createdAt)}
+    </span>
+  </span>
+
+  {/* RIGHT : BOOKING ID + PRICE */}
+  <div className="text-right">
+    <div className="text-gray-400 text-sm">
+      {req.id} • {req.date}
+    </div>
+
+    {(req.status === "PAYMENT_PENDING" ||
+      req.status === "PAYMENT_CONFIRMED") && (
+      <div className="mt-1 text-base font-semibold text-gray-900">
+  ₹{req.price}
+</div>
+
+    )}
+  </div>
+</div>
+
+{/* CUSTOMER INFO */}
+  <div className="space-y-0.5 mt-1">  {/* Reduced spacing */}
+  <p className="text-base font-semibold -mt-0.5">
+    {req.customerName}
+  </p>
+
+    <div className="flex items-center gap-2 text-sm text-gray-600">
+      <Phone className="w-4 h-4" />
+      {req.phone}
+    </div>
+  </div>
+
+  {/* LOCATIONS */}
+ <div className="flex items-center gap-8 mt-3 text-sm text-gray-700">
+    <div className="flex items-center gap-2">
+      <MapPin className="w-4 h-4 text-green-600" />
+      {req.pickupAddress?.city}, {req.pickupAddress?.state}
+    </div>
+
+    <div className="flex items-center gap-2">
+      <MapPin className="w-4 h-4 text-red-500" />
+      {req.dropAddress?.city}, {req.dropAddress?.state}
+    </div>
+  </div>
+
+  {/* DETAILS */}
+  <div className="flex items-center gap-6 mt-3 text-sm text-gray-600">
+    <span className="flex items-center gap-1">
+      <Weight className="w-4 h-4" />
+      {req.weight} kg
+    </span>
+
+    <span className="flex items-center gap-1">
+      <Package className="w-4 h-4" />
+      {req.goodsType}
+    </span>
+  </div>
+
+  {/* DIVIDER LINE */}
+  <hr className="my-4 border-gray-200" />
+
+  {/* ACTION BUTTONS */}
+ <div className="flex justify-end gap-3">
+  <button
+    onClick={() => {
+      setSelectedBooking(req);
+      setShowDetails(true);
+    }}
+    className="flex items-center gap-2 px-4 py-2 border rounded-lg text-sm hover:bg-gray-100"
+  >
+    <Eye className="w-4 h-4" />
+    View Details
+  </button>
+
+  <button
+    onClick={() => handleReject(req.id)}
+    className="px-4 py-2 border border-red-500 text-red-600 rounded-lg text-sm hover:bg-red-50"
+  >
+    Reject
+  </button>
+
+{req.status?.toUpperCase() === "PENDING" && kycStatus !== "MANUAL_REVIEW" && agency?.featureAllowed && (
+  <button
+    onClick={async () => {
+      try {
+        // 1️⃣ Firestore se agency ka perKmRate fetch karo
+        const agencyDoc = await getDoc(doc(db, "agencies", auth.currentUser.uid));
+        const perKmRate = agencyDoc.exists() ? agencyDoc.data().perKmRate || 0 : 0;
+
+        // 2️⃣ Distance from booking
+   let distance = req.distance; // can be null
+
+
+        let additionalPrice = 0;
+        let totalPrice = distance * perKmRate;
+
+        // 3️⃣ Swal modal
+ Swal.fire({
+  title: 'Set Price',
+  html: `
+    <div class="text-left space-y-2">
+      
+      ${
+        distance === null
+          ? `
+            <label class="block mb-1">Enter Distance (km):</label>
+            <input type="number" id="manualDistance" class="swal2-input" placeholder="e.g. 120" />
+          `
+          : `<p>Total Distance: <b>${distance} km</b></p>`
+      }
+
+      <p>Per Km Rate: <b>₹${perKmRate}</b></p>
+
+      <label class="block mt-2 mb-1">Additional Charges (₹):</label>
+      <input type="number" id="additionalPrice" class="swal2-input" placeholder="0" />
+
+      <p class="mt-2">Total Price: <b id="totalPrice">₹0</b></p>
+    </div>
+  `,
+  showCancelButton: true,
+  confirmButtonText: 'Confirm & Send for Payment',
+  preConfirm: () => {
+    const add = Number(
+      Swal.getPopup().querySelector('#additionalPrice')?.value
+    ) || 0;
+
+    if (distance === null) {
+      const manual = Number(
+        Swal.getPopup().querySelector('#manualDistance')?.value
+      );
+      if (!manual || manual <= 0) {
+        Swal.showValidationMessage("Please enter valid distance");
+        return false;
+      }
+      distance = manual;
+    }
+
+    return {
+      distance,
+      totalPrice: distance * perKmRate + add,
+      additionalCharges: add
+    };
+  },
+  didOpen: () => {
+    const calc = () => {
+      const add =
+        Number(
+          Swal.getPopup().querySelector('#additionalPrice')?.value
+        ) || 0;
+
+      const manual =
+        Number(
+          Swal.getPopup().querySelector('#manualDistance')?.value
+        ) || distance || 0;
+
+      Swal.getPopup().querySelector(
+        '#totalPrice'
+      ).innerHTML = `₹${(manual * perKmRate + add).toFixed(2)}`;
+    };
+
+    Swal.getPopup().querySelectorAll('input').forEach(i =>
+      i.addEventListener('input', calc)
+    );
+  }
+}).then(async (res) => {
+  if (!res.isConfirmed) return;
+
+  await updateDoc(doc(db, "bookings", req.id), {
+    distance: res.value.distance,   // ✅ manual save
+    price: res.value.totalPrice,
+    additionalCharges: res.value.additionalCharges,
+    perKmRate,
+    status: "PAYMENT_PENDING",
+    priceSetAt: serverTimestamp(),
+  });
+
+  Swal.fire("Price Sent", "Waiting for customer payment", "success");
+});
+
+      } catch (err) {
+        console.error(err);
+        Swal.fire("Error", "Unable to fetch rate or set price", "error");
+      }
+    }}
+    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+  >
+    Set Price
+  </button>
+)}
+
+
+{req.status === "PAYMENT_CONFIRMED" && kycStatus !== "MANUAL_REVIEW" && (
+  <button
+    onClick={() => {
+      setAssignBooking(req);
+      setShowAssignModal(true);
+    }}
+    
+    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
+  >
+  
+    <Check className="w-4 h-4" />
+    Accept & Assign
+  </button>
+)}
+</div>
+</div>
               ))}
             </div>
           </div>
@@ -424,21 +869,25 @@ const [loadingAgency, setLoadingAgency] = useState(true);
           sideNavOpen={open}
         />
 )}
-
-
-       {/* IMPORTED FOOTER */}
-             <Footer />
+       {/* Footer & Modals */}
+        <Footer />
+        <BookingDetails
+          open={showDetails}
+          booking={selectedBooking}
+          onClose={() => {
+            setShowDetails(false);
+            setSelectedBooking(null);
+          }}
+        />
+        <AssignBookingModal
+          open={showAssignModal}
+          booking={assignBooking}
+          onClose={() => {
+            setShowAssignModal(false);
+            setAssignBooking(null);
+          }}
+        />
       </div>
-
-      {/* ---------------- Active Booking Overlay ---------------- */}
-      {/* {showActiveBookingPanel && (
-      <ActiveBooking 
-        showPanel={true}
-        onClose={() => setShowActiveBookingPanel(false)}
-        sideNavOpen={open}   // ✅ THIS IS THE KEY FIX
-      />
-    )} */}
-
     </div>
   );
 }

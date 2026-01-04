@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import smallTruck from "../../assets/smallTruck.png";
@@ -25,43 +25,94 @@ import Swal from "sweetalert2";
 import { signOut } from "firebase/auth";
 import { auth } from "../../firebase";
 import { useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import React, { useState, useEffect } from "react";
+// import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { db } from "../../firebase"; 
-import { doc, getDoc } from "firebase/firestore";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  onSnapshot,
+  doc,
+  getDoc
+} from "firebase/firestore";
 
 export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAllBookings, setShowAllBookings] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [activePage, setActivePage] = useState("overview");
+  const [userData, setUserData] = useState({ fullName: "", email: "" });
+  const [recentBooking, setRecentBooking] = useState(null);
+  // const [recentActivities, setRecentActivities] = useState([]);
   const navigate = useNavigate();
+  const [kycStatus, setKycStatus] = useState("");
+
+  const timeAgo = (date) => {
+    if (!date) return "";
+
+    const now = new Date();
+    const diff = Math.floor((now - date) / 1000); // seconds
+
+    if (diff < 60) return "just now";
+    if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+
+    return `${Math.floor(diff / 86400)} days ago`;
+  };
   useEffect(() => {
-  const fetchUserData = async () => {
-    if (!auth.currentUser) return;
+  let unsubscribeBookings = null;
+  const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    if (!user) return;
 
-    const uid = auth.currentUser.uid;
-    const collectionName = "customers"; // ya "agencies" depending on login
+    // ---------- USER INFO ----------
+    let fullName = "";
+    let email = user.email || "";
 
-    const docRef = doc(db, collectionName, uid);
+    const docRef = doc(db, "customers", user.uid);
     const docSnap = await getDoc(docRef);
 
-    if (docSnap.exists()) {
-      setUserData({
-        fullName: docSnap.data().fullName || "User",
-        email: auth.currentUser.email || "",
-      });
+    if (docSnap.exists() && docSnap.data().fullName) {
+      setKycStatus(docSnap.data().kycStatus?.toLowerCase());
+      fullName = docSnap.data().fullName;
+    } else if (user.displayName) {
+      fullName = user.displayName;
+    } else if (email) {
+      fullName = email.split("@")[0];
     } else {
-      setUserData({
-        fullName: "User",
-        email: auth.currentUser.email || "",
-      });
+      fullName = "User";
     }
+
+    setUserData({ fullName, email });
+
+    // ---------- RECENT BOOKING ----------
+   const q = query(
+  collection(db, "bookings"),
+  where("userId", "==", user.uid),
+  orderBy("createdAt", "desc"),
+  limit(1)
+);
+       unsubscribeBookings = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const docSnap = snapshot.docs[0];
+        setRecentBooking({
+          id: docSnap.id,
+          ...docSnap.data(),
+          createdAt: docSnap.data().createdAt?.toDate(),
+        });
+      } else {
+        setRecentBooking(null);
+      }
+    });
+  });
+
+  return () => {
+    if (unsubscribeBookings) unsubscribeBookings();
+    unsubscribeAuth();
   };
-
-  fetchUserData();
 }, []);
-
-  const [userData, setUserData] = useState({ fullName: "", email: "" });
   const handleLogout = async () => {
   const result = await Swal.fire({
     title: "Logout?",
@@ -116,6 +167,15 @@ export default function Dashboard() {
 
   const SidebarItem = ({ icon, label, pageKey }) => {
   const handleClick = () => {
+    if (pageKey === "newBooking" && kycStatus === "manual_review") {
+    Swal.fire({
+      icon: "warning",
+      title: "KYC Under Review",
+      text: "Your KYC is under manual review. You can create a booking once it is verified.",
+      confirmButtonColor: "#7c3aed",
+    });
+    return; // ⛔ page change stop
+  }
     if (pageKey === "logout") {
       handleLogout();        // 🔴 logout action
     } else {
@@ -178,7 +238,7 @@ export default function Dashboard() {
 
       {/* MAIN CONTENT */}
 <div
-  className={`flex-1 p-6 space-y-6 relative transition-all duration-300 ${
+  className={`flex-1 p-6 relative transition-all duration-300 ${
     sidebarOpen ? "ml-64" : "ml-0"
   }`}
 >
@@ -364,7 +424,7 @@ export default function Dashboard() {
 
 
         {/* ----------------- ACTION REQUIRED ----------------- */}
-        {!showAllBookings && activePage === "overview" && (
+        {/* {!showAllBookings && activePage === "overview" && (
           <section className="mt-6">
             <h2 className="text-xl font-semibold mb-3">Action Required</h2>
 
@@ -390,10 +450,10 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           </section>
-        )}
+        )} */}
 
         {/* ----------------- ACTIVE SHIPMENTS ----------------- */}
-        {activePage === "overview" && (
+        {/* {activePage === "overview" && (
           <section>
             <h2 className="text-xl font-semibold mb-3">Active Shipments</h2>
             <Card className="border-l-4 border-blue-500 bg-blue-50 rounded-xl shadow-sm hover:shadow-xl transition">
@@ -414,7 +474,85 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           </section>
+        )} */}
+        {/* ----------------- RECENT ACTIVITY ----------------- */}
+          {activePage === "overview" && (
+            <Card className="mt-10 rounded-2xl shadow-lg bg-white hover:shadow-xl transition">
+              <CardContent className="p-6">
+                <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  🕒 Recent Activity
+                </h2>
+
+                <div className="space-y-4">
+
+                  {/* Payment successful */}
+                  <div className="flex items-start gap-3">
+                    <span className="w-3 h-3 bg-green-500 rounded-full mt-1" />
+                    <div>
+                      <p className="font-medium">Payment successful</p>
+                      <p className="text-gray-500 text-sm">
+                        BK001 • ₹35,000
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Shipment in transit */}
+                  <div className="flex items-start gap-3">
+                    <span className="w-3 h-3 bg-blue-500 rounded-full mt-1" />
+                    <div>
+                      <p className="font-medium">Shipment in transit</p>
+                      <p className="text-gray-500 text-sm">
+                        BK001 • 2 hours ago
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Agency confirmed booking */}
+                  <div className="flex items-start gap-3">
+                    <span className="w-3 h-3 bg-purple-500 rounded-full mt-1" />
+                    <div>
+                      <p className="font-medium">Agency confirmed booking</p>
+                      <p className="text-gray-500 text-sm">
+                        BK002 • 5 hours ago
+                      </p>
+                    </div>
+                  </div>
+                 {/* Booking created */}
+              <div className="flex items-start gap-3">
+                  <span className="w-3 h-3 bg-yellow-500 rounded-full mt-1" />
+                  <div>
+                    <p className="font-medium">Booking created</p>
+                    <p className="text-gray-500 text-sm">
+                      BK003 • 1 day ago
+                    </p>
+                  </div>
+                </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+      {/* ----------------- THIS MONTH ----------------- */}
+        {activePage === "overview" && (
+         <div className="mt-8 mb-8 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-3xl p-8 hover:shadow-2xl transition cursor-pointer">
+
+            <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+              📊 This Month
+            </h2>
+
+            <div className="grid grid-cols-2 gap-y-4">
+              <p className="text-lg">Bookings</p>
+              <p className="text-lg text-right">8 trips</p>
+
+              {/* <p className="text-lg">Amount</p>
+              <p className="text-lg text-right">₹1,42,000</p> */}
+
+              <p className="text-lg">Avg. Delivery</p>
+              <p className="text-lg text-right">2.5 days</p>
+            </div>
+          </div>
         )}
+
 
         {/* ----------------- DYNAMIC PAGES ----------------- */}
         {activePage === "overview" && <div> {/* Put overview content here if needed */} </div>}

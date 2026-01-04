@@ -64,12 +64,12 @@ export default function TrackShipment({ onBack }) {
   return (
     <div className="bg-white p-6 shadow-lg rounded-xl mt-6 w-full max-w-3xl mx-auto">
       {/* Back Button */}
-      <button
+      {/* <button
         onClick={onBack}
         className="flex items-center gap-2 text-blue-600 hover:underline mb-4"
       >
         <ArrowLeft size={20} /> Back to Home
-      </button>
+      </button> */}
 
       {/* Title */}
       <h2 className="text-3xl font-bold mb-6 flex items-center gap-3">

@@ -52,9 +52,9 @@ const handleSelect = (type) => {
       </header>
 
       {/* Hero Section */}
-      <main className="flex flex-col lg:flex-row justify-between items-center px-10 py-16 lg:gap-x-24">
+      <main className="flex flex-col lg:flex-row justify-between items-start px-10 py-16 lg:gap-x-24">
         <div className="max-w-2xl mx-auto text-left">
-          <h2 className="text-2xl sm:text-5xl lg:text-6xl font-bold text-gray-900 leading-tight mb-4">
+          <h2 className="text-2xl sm:text-5xl lg:text-5.5xl font-bold text-gray-900 leading-tight mb-4">
             Your Trusted{" "}
             <span className="bg-gradient-to-r from-blue-600 to-purple-600 text-transparent bg-clip-text">
               Logistics Partner
@@ -96,24 +96,6 @@ const handleSelect = (type) => {
             </div>
           </div>
 
-          {/* Info Boxes */}
-          <div className="mt-6 flex flex-col sm:flex-row justify-center gap-6">
-            <div className="bg-white rounded-xl shadow-md p-9 flex-1 text-center hover:shadow-xl transition">
-              <Counter to={50} duration={1500} color="text-purple-600" />
-              <p className="text-gray-500 mt-2">Verified Agencies</p>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-md p-9 flex-1 text-center hover:shadow-xl transition">
-              <Counter to={80} duration={1500} color="text-teal-600" />
-              <p className="text-gray-500 mt-2">Happy Customers</p>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-md p-9 flex-1 text-center hover:shadow-xl transition">
-              <Counter to={100} duration={1500} color="text-pink-600" />
-              <p className="text-gray-500 mt-2">Successful Deliveries</p>
-            </div>
-          </div>
-
           {/* Zoom Modal */}
           {zoomed && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
@@ -135,7 +117,7 @@ const handleSelect = (type) => {
         </div>
 
         {/* Right side: User Type Cards */}
-        <div className="mt-8 lg:mt-0 flex flex-col items-center gap-6">
+        <div className="mt-8 lg:mt-12 flex flex-col items-center gap-6">
           <h3 className="text-3xl font-bold text-gray-800">Select User Type</h3>
           <p className="text-gray-500 text-center mb-4">
             Choose the option that best describes you
@@ -187,6 +169,27 @@ const handleSelect = (type) => {
           )}
         </div>
       </main>
+      {/* Stats Section */}
+<section className="py-8">
+  <div className="flex flex-col sm:flex-row justify-center items-center gap-8 max-w-5xl mx-auto">
+
+    <div className="bg-white rounded-xl shadow-md p-9 w-64 text-center hover:shadow-xl transition">
+      <Counter to={50} duration={1500} color="text-purple-600" />
+      <p className="text-gray-500 mt-2">Verified Agencies</p>
+    </div>
+
+    <div className="bg-white rounded-xl shadow-md p-9 w-64 text-center hover:shadow-xl transition">
+      <Counter to={80} duration={1500} color="text-teal-600" />
+      <p className="text-gray-500 mt-2">Happy Customers</p>
+    </div>
+
+    <div className="bg-white rounded-xl shadow-md p-9 w-64 text-center hover:shadow-xl transition">
+      <Counter to={100} duration={1500} color="text-pink-600" />
+      <p className="text-gray-500 mt-2">Successful Deliveries</p>
+    </div>
+
+  </div>
+</section>
 
       {/* About Section */}
 <section className="bg-gradient-to-b from-white to-indigo-50 px-10 py-16">

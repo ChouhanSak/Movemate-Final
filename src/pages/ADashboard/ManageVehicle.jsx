@@ -1,7 +1,18 @@
-import React, { useState } from "react";
+import React, { useState, updateDoc } from "react";
 import { Plus, X, Truck, Trash2 } from "lucide-react";
 import { auth, db } from "../../firebase";
-import { collection, addDoc, query, where, getDocs, deleteDoc, doc, getDoc } from "firebase/firestore";
+import { 
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs,
+  deleteDoc,
+  doc,
+  getDoc,
+  serverTimestamp
+} from "firebase/firestore";
+
 import { onAuthStateChanged } from "firebase/auth";
 import { useEffect } from "react";
 import Swal from "sweetalert2";
@@ -14,6 +25,14 @@ const [agency, setAgency] = useState(null);
 
   const [form, setForm] = useState({ type: "", capacity: "", license: "" });
   const [message, setMessage] = useState("");
+  const vehicleTypes = [
+  { label: "Mini Truck (MN)", value: "Mini Truck" },
+  { label: "Small Truck (ST)", value: "Small Truck" },
+  { label: "Medium Truck (MT)", value: "Medium Truck" },
+  { label: "Large Truck (LT)", value: "Large Truck" },
+  { label: "Container Truck (CT)", value: "Container Truck" },
+  { label: "Tempo (TP)", value: "Tempo" },
+];
 
   // Delete Vehicle
   const handleDeleteVehicle = async (vehicleId, license) => {
@@ -28,7 +47,27 @@ const [agency, setAgency] = useState(null);
     confirmButtonText: "Yes, delete it!",
     cancelButtonText: "Cancel",
   });
+  const handleCompleteBooking = async () => {
+  try {
+    // 1️⃣ booking complete
+    await updateDoc(doc(db, "bookings", bookingId), {
+      status: "Completed",
+      completedAt: new Date(),
+    });
 
+    // 2️⃣ vehicle free
+    await updateDoc(doc(db, "vehicles", vehicleId), {
+      status: "Available",
+    });
+
+    alert("Booking completed & vehicle is now available");
+  } catch (error) {
+    console.error(error);
+  }
+};
+await updateDoc(doc(db, "vehicles", booking.vehicleId), {
+  status: "Available",
+});
   if (result.isConfirmed) {
     // delete document
     await deleteDoc(doc(db, "vehicles", vehicleId));
@@ -40,9 +79,15 @@ const [agency, setAgency] = useState(null);
     Swal.fire("Deleted!", `${license} has been deleted.`, "success");
   }
 };
-
-
+const normalizeStatus = (status) => {
+  if (status === "Busy") return "Not Available";
+  return status;
+};
     const handleAddVehicle = async () => {
+      if (!agency) {
+    setMessage("Agency data is loading. Please wait...");
+    return;
+  }
   if (!form.type || !form.capacity || !form.license) {
     setMessage("All fields are mandatory!");
     setTimeout(() => setMessage(""), 3000);
@@ -50,6 +95,17 @@ const [agency, setAgency] = useState(null);
   }
 
   try {
+    const q = query(
+    collection(db, "vehicles"),
+    where("license", "==", form.license.toUpperCase()),
+    where("agencyId", "==", auth.currentUser.uid)
+  );
+
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    setMessage("Vehicle with this license already exists!");
+    return;
+  }
     const docRef = await addDoc(collection(db, "vehicles"), {
       agencyId: auth.currentUser.uid,          // 🔥 IMPORTANT
       agencyName: agency.agencyName,            // 🔥 AUTO
@@ -57,13 +113,16 @@ const [agency, setAgency] = useState(null);
       capacity: Number(form.capacity),
       license: form.license.toUpperCase(),
       status: "Available",
-      createdAt: new Date(),
+      createdAt: serverTimestamp(),
     });
 
     setVehicles([...vehicles, { id: docRef.id, ...form, status: "Available" }]);
     setShowAddVehicle(false);
     setForm({ id: "", type: "", capacity: "", license: "" });
     setMessage("Vehicle added successfully!");
+    setTimeout(() => {
+  setMessage("");
+}, 5000); // 5 seconds
   } catch (err) {
     setMessage("Error adding vehicle");
   }
@@ -79,33 +138,27 @@ const [agency, setAgency] = useState(null);
   const unsub = onAuthStateChanged(auth, async (user) => {
     if (!user) return;
 
-    // get agency data
+    // ✅ 1. AGENCY DATA FETCH
     const agencyRef = doc(db, "agencies", user.uid);
     const agencySnap = await getDoc(agencyRef);
+
     if (agencySnap.exists()) {
       setAgency(agencySnap.data());
     }
 
-    // get vehicles of this agency
+    // ✅ 2. VEHICLES FETCH
     const q = query(
       collection(db, "vehicles"),
       where("agencyId", "==", user.uid)
     );
+
     const snap = await getDocs(q);
-    const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const list = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    }));
 
-    // ✅ Check bookings for each vehicle
-    const bookingsSnap = await getDocs(collection(db, "bookings"));
-    const bookings = bookingsSnap.docs.map(d => d.data());
-
-    const updatedList = list.map(vehicle => {
-      const isBooked = bookings.some(
-        b => b.vehicleId === vehicle.id && b.status === "Booked"
-      );
-      return { ...vehicle, status: isBooked ? "Not Available" : "Available" };
-    });
-
-    setVehicles(updatedList);
+    setVehicles(list);
   });
 
   return () => unsub();
@@ -139,9 +192,13 @@ const [agency, setAgency] = useState(null);
               <div className={`p-3 rounded-xl ${v.status === 'Available' ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
                 <Truck className="w-6 h-6" />
               </div>
-              <span className={`px-3 py-1 text-xs font-semibold rounded-full ${getStatusStyle(v.status)}`}>
-                {v.status}
-              </span>
+             <span
+  className={`px-3 py-1 text-xs font-semibold rounded-full 
+    ${getStatusStyle(normalizeStatus(v.status))}`}
+>
+  {normalizeStatus(v.status)}
+</span>
+
             </div>
 
             <h3 className="text-xl font-semibold mb-1">{v.license}</h3>
@@ -182,16 +239,22 @@ const [agency, setAgency] = useState(null);
               <X className="w-6 h-6 cursor-pointer text-gray-500 hover:text-gray-800" onClick={() => setShowAddVehicle(false)} />
             </div>
             <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700">Vehicle Type</label>
-                <input
-                  type="text"
-                  className="w-full mt-1 p-2 border border-gray-300 rounded-lg"
-                  placeholder="e.g., Small Truck (5T)"
-                  value={form.type}
-                  onChange={(e) => setForm({ ...form, type: e.target.value })}
-                />
-              </div>
+             <label className="text-sm font-medium text-gray-700">Vehicle Type</label>
+
+<select
+  className="w-full mt-1 p-2 border border-gray-300 rounded-lg bg-white"
+  value={form.type}
+  onChange={(e) => setForm({ ...form, type: e.target.value })}
+>
+  <option value="">Select vehicle type</option>
+
+  {vehicleTypes.map((v, index) => (
+    <option key={index} value={v.value}>
+      {v.label}
+    </option>
+  ))}
+</select>
+
               <div>
                 <label className="text-sm font-medium text-gray-700">Capacity (KG)</label>
                 <input

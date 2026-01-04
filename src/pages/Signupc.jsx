@@ -7,6 +7,40 @@ import Swal from "sweetalert2"; // 📌 Added for popups
 import { useNavigate } from "react-router-dom";
 
 export default function Signupc({ userType, onBack }) {
+const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
+  const res = await fetch("http://localhost:5000/verify-kyc", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      imageUrl,
+      name: fullName,
+      docType,
+      userType: "customer",
+    }),
+  });
+
+  const data = await res.json();
+  return data.verified ? "AUTO_VERIFIED" : "MANUAL_REVIEW";
+};
+
+
+  const uploadToCloudinary = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("upload_preset", "movemate_upload");
+
+  const res = await fetch(
+   "https://api.cloudinary.com/v1_1/dlh1uo28j/image/upload",
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+
+  const data = await res.json();
+  return data.secure_url;
+};
+
   useEffect(() => {
     console.log("✅ SignUpForm mounted", { userType });
   }, [userType]);
@@ -24,6 +58,8 @@ const navigate = useNavigate();
     address: "",
     pinCode: "",
     city: "",
+     kycFile: null,
+  kycType: "",
   });
 
   const handleChange = (field, value) => {
@@ -84,80 +120,72 @@ const navigate = useNavigate();
     }
 
     // ⭐ VALIDATION FOR STEP 2 (KYC)
-    if (step === 2) {
-      const uploadedDocs = Object.keys(formData).filter(
-        (key) => key.endsWith("Uploaded") && formData[key]
-      );
-
-      if (uploadedDocs.length === 0) {
-        Swal.fire({
-          icon: "error",
-          title: "No Document Uploaded",
-          text: "Please upload at least one KYC document!",
-        });
-        return;
-      }
-
-      try {
-        setLoading(true);
-
-        const userCredential = await createUserWithEmailAndPassword(
-          auth,
-          formData.email,
-          formData.password
-        );
-        const uid = userCredential.user.uid;
-
-        await setDoc(doc(db, "customers", uid), {
-          fullName: formData.fullName,
-          email: formData.email,
-          phone: formData.phone,
-          address: formData.address,
-          pinCode: formData.pinCode,
-          city: formData.city,
-          userType: "customer",
-          createdAt: new Date(),
-        });
-
-        // After successful signup
-Swal.fire({
-  icon: "success",
-  title: "Registration Successful!",
-  text: "Your customer account has been created.",
-}).then(() => {
-  navigate("/customer-dashboard");
+  if (step === 2) {
+  if (!formData.kycFile) {
+    Swal.fire({
+  icon: "error",
+  title: "Upload KYC Document",
+  text: "Please upload Aadhaar or PAN card image!"
 });
 
+    return;
+  }
 
-setLoading(false);
+  try {
+    setLoading(true);
+
+    // 1️⃣ Upload Aadhaar to Cloudinary
+    const kycUrl = await uploadToCloudinary(formData.kycFile);
+
+    // 2️⃣ Call backend OCR for auto verification
+    const kycStatus = await verifyKycWithBackend(
+  kycUrl,
+  formData.fullName,
+  formData.kycType   // 🔥 VERY IMPORTANT
+);
 
 
-      } catch (error) {
-        console.error("❌ Signup Error:", error);
+    // 3️⃣ Create user in Firebase
+    const userCredential = await createUserWithEmailAndPassword(
+      auth,
+      formData.email,
+      formData.password
+    );
+    const uid = userCredential.user.uid;
 
-        Swal.fire({
-          icon: "error",
-          title: "Signup Failed",
-          text: error.message,
-        });
+    await setDoc(doc(db, "customers", uid), {
+      fullName: formData.fullName,
+      email: formData.email,
+      phone: formData.phone,
+      userType: "customer",
+      kycUrl,
+      kycStatus,
+      createdAt: new Date(),
+    });
 
-        setLoading(false);
-      }
-    }
-  };
+    Swal.fire({
+      icon: "success",
+      title: "Registration Successful!",
+      text: `KYC Status: ${kycStatus}`
+    }).then(() => navigate("/customer-dashboard"));
+
+    setLoading(false);
+  } catch (err) {
+    console.error(err);
+    Swal.fire({ icon: "error", title: "Signup Failed", text: err.message });
+    setLoading(false);
+  }
+}
+  }
 
   const kycDocuments = [
     { name: "Aadhar Card", desc: "Government issued ID proof" },
     { name: "PAN Card", desc: "Tax identification document" },
-    { name: "Voter ID", desc: "Election commission ID proof" },
-    { name: "Driving License", desc: "Valid driving license" },
   ];
 
   const slugId = (name) => name.replace(/\s+/g, "-").toLowerCase();
 
-  const isAnyDocUploaded = Object.keys(formData).some(
-    (key) => key.endsWith("Uploaded") && formData[key]
-  );
+ const isAnyDocUploaded = !!formData.kycFile;
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-6">
@@ -296,23 +324,31 @@ setLoading(false);
                         <p className="text-sm text-gray-500">{doc.desc}</p>
                       </div>
 
-                      <div className="space-x-2 flex items-center gap-2">
-                        <input
-                          type="file"
-                          id={id}
-                          className="hidden"
-                          onChange={(e) => {
-                            if (e.target.files.length > 0) {
-                              setFormData((prev) => ({ ...prev, [`${id}Uploaded`]: true }));
-                            }
-                          }}
-                        />
+                     <div className="space-x-2 flex items-center gap-2">
+  <input
+    type="file"
+    id={id}
+    className="hidden"
+    accept="image/*"
+    onChange={(e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        setFormData((prev) => ({
+          ...prev,
+          kycFile: e.target.files[0], // ✅ actual file
+          kycType: doc.name,          // ✅ Aadhaar / PAN / Voter
+        }));
+      }
+    }}
+  />
 
                         <label htmlFor={id} className="px-3 py-1 bg-blue-600 text-white rounded cursor-pointer">
                           Upload
                         </label>
 
-                        {formData[`${id}Uploaded`] && <span className="text-green-600 font-semibold">✔ Uploaded</span>}
+                        {formData.kycFile && formData.kycType === doc.name && (
+  <span className="text-green-600 font-semibold">✔ Uploaded</span>
+)}
+
                       </div>
                     </div>
                   );
