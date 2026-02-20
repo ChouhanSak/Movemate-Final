@@ -1,287 +1,456 @@
-// components/ActiveBooking.jsx
-import React, { useState } from "react";
-import { Phone, User, Truck, MapPin, Calendar, X } from "lucide-react";
+// src/pages/agency/ActiveBooking.jsx
+import React, { useEffect, useState } from "react";
+import { createDriverUploadLink } from "../../utils/driverUpload";
+import {
+  collection,
+  query,
+  onSnapshot,
+  updateDoc,
+  doc,
+  where,
+  getDoc
+} from "firebase/firestore";
+import { auth, db } from "../../firebase";
+import { Phone, User, Truck, MapPin, X } from "lucide-react";
+import { Card } from "../../components/ui/card";
+import BookingFilter from "../../components/BookingFilter";
+import EmptyState from "../../components/EmptyState";
 
-const initialBookings = [
-  {
-    id: "BK001",
-    status: "In Transit",
-    payment: "Customer Paid",
-    customer: { name: "Michael Brown", phone: "+91 98765 11111" },
-    driver: { name: "Amit Sharma", vehicle: "MH-02-AB-5678" },
-    pickup: "Ahmedabad, Gujarat",
-    drop: "Jaipur, Rajasthan",
-    eta: "Nov 8, 2025",
-    amount: "₹28,000",
-  },
-  {
-    id: "BK002",
-    status: "Out For Delivery",
-    payment: "Customer Paid",
-    customer: { name: "Priya Sharma", phone: "+91 98765 22222" },
-    driver: { name: "Rajesh Kumar", vehicle: "MH-02-AB-1234" },
-    pickup: "Kolkata, West Bengal",
-    drop: "Bhubaneswar, Odisha",
-    eta: "Nov 7, 2025",
-    amount: "₹15,000",
-  },
-];
+/* ---------------- STATUS CONFIG ---------------- */
+const ACTIVE_STATUSES = ["BOOKING_PLACED", "IN_TRANSIT", "COMPLETED"];
 
 const statusBadgeColor = (status) => {
-  const s = (status || "").toLowerCase();
-  if (s.includes("deliver")) return "bg-green-600";
-  if (s.includes("transit")) return "bg-blue-500";
-  if (s.includes("booked")) return "bg-indigo-500";
-  if (s.includes("out for delivery")) return "bg-green-600";
-  return "bg-gray-400";
+  if (status === "BOOKING_PLACED") return "bg-indigo-100 text-indigo-700";
+  if (status === "IN_TRANSIT") return "bg-blue-100 text-blue-700";
+  if (status === "COMPLETED") return "bg-green-100 text-green-700";
+  return "bg-gray-100 text-gray-600";
 };
 
-export default function ActiveBooking({ showPanel, onClose, sideNavOpen }) {
-  const [bookings, setBookings] = useState(initialBookings);
+const formatStatus = (status) => (status ? status.replaceAll("_", " ") : "");
 
-  // Modal state: 'none' | 'bookingId' | 'status'
+/* ---------------- COMPONENT ---------------- */
+export default function ActiveBooking() {
+  const [bookings, setBookings] = useState([]);
+  const [vehiclesMap, setVehiclesMap] = useState({});
   const [modalState, setModalState] = useState({
-    type: "none",
-    bookingIdInput: "",
-    selectedBookingId: null,
+    open: false,
+    bookingId: null,
     chosenStatus: null,
   });
+const [searchTerm, setSearchTerm] = useState("");
+const [hasSearched, setHasSearched] = useState(false);
+const handleSearch = () => {
+  setHasSearched(true);
+};
 
-  if (!showPanel) return null;
 
-  const openBookingIdModal = () => {
-    setModalState({
-      type: "bookingId",
-      bookingIdInput: "",
-      selectedBookingId: null,
-      chosenStatus: null,
-    });
-  };
+const formatAddress = (addr, fallback) => {
+  if (!addr) return fallback || "N/A";
 
-  const closeModal = () => {
-    setModalState({
-      type: "none",
-      bookingIdInput: "",
-      selectedBookingId: null,
-      chosenStatus: null,
-    });
-  };
+  return [
+    addr.street,       // street number ya name
+    addr.area,         // agar area hai
+    addr.city,
+    addr.state,      
+  ]
+    .filter(Boolean)    
+    .join(", ");
+};
 
-  const handleTrack = () => {
-    let cleanId = modalState.bookingIdInput.trim().toUpperCase();
-    if (!cleanId) return alert("Please enter a Booking ID.");
-    if (cleanId.startsWith("#")) cleanId = cleanId.substring(1);
 
-    const found = bookings.find((b) => b.id.toUpperCase() === cleanId);
-    if (!found) return alert("Invalid Booking ID");
+  /* ---------------- FETCH BOOKINGS ---------------- */
+  useEffect(() => {
+  if (!auth.currentUser) return;
 
-    setModalState({
-      type: "status",
-      selectedBookingId: found.id,
-      bookingIdInput: "",
-      chosenStatus: found.status,
-    });
-  };
-
-  const finalizeStatus = () => {
-    if (!modalState.chosenStatus) return alert("Please select a status.");
-
-    setBookings((prev) =>
-      prev.map((b) =>
-        b.id === modalState.selectedBookingId
-          ? { ...b, status: modalState.chosenStatus }
-          : b
-      )
-    );
-
-    closeModal();
-  };
-
-  // Always get latest booking from array
-  const currentBooking = bookings.find(
-    (b) => b.id === modalState.selectedBookingId
+  const q = query(
+    collection(db, "bookings"),
+    where("agencyId", "==", auth.currentUser.uid)
   );
 
+  const unsub = onSnapshot(q, async (snap) => {
+    const bookingsData = [];
+    const vehicleIds = new Set();
+
+    snap.docs.forEach((d) => {
+      const data = d.data();
+      bookingsData.push({ id: d.id, ...data });
+
+      if (data.vehicleId) {
+        vehicleIds.add(data.vehicleId);
+      }
+    });
+
+    setBookings(bookingsData);
+
+    // 🔹 Fetch vehicles
+    const vehiclesTemp = {};
+    for (let vid of vehicleIds) {
+      const vSnap = await getDoc(doc(db, "vehicles", vid));
+      if (vSnap.exists()) {
+        vehiclesTemp[vid] = vSnap.data();
+      }
+    }
+
+    setVehiclesMap(vehiclesTemp);
+  });
+
+  return () => unsub();
+}, []);
+
+  /* ---------------- FILTER ACTIVE BOOKINGS ---------------- */
+  const today = new Date();
+
+const activeBookings = bookings.filter((b) => {
+  if (!ACTIVE_STATUSES.includes(b.status)) return false;
+
+  if (!b.pickupDate) return true;
+
+const pickup = b.pickupDate?.toDate
+  ? b.pickupDate.toDate()
+  : new Date(b.pickupDate);
+
+
+  // Agar pickup date nikal gayi → active mat dikhao
+  if (today > pickup && b.status !== "COMPLETED") {
+    return false;
+  }
+
+  return true;
+});
+
+const [filterStatus, setFilterStatus] = useState("");
+
+// Apply filter
+const filteredBookings = activeBookings.filter((b) => {
+  // STATUS FILTER
+  if (filterStatus && b.status !== filterStatus) return false;
+
+  // SEARCH FILTER
+  if (!searchTerm) return true;
+
+  const term = searchTerm.toLowerCase();
+
   return (
-            <div className="w-full min-h-screen bg-gray-100">
+    b.id?.toLowerCase().includes(term) ||
 
-      <div className="relative min-h-screen p-6">
-        {/* Close Panel */}
-        {/* <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-gray-500 hover:text-gray-900"
-        >
-          <X className="w-6 h-6" />
-        </button> */}
+    b.pickup?.toLowerCase().includes(term) ||
+    b.destination?.toLowerCase().includes(term) ||
 
-        <h1 className="text-3xl font-bold mb-6">Active Bookings</h1>
+    b.pickupAddress?.city?.toLowerCase().includes(term) ||
+    b.pickupAddress?.area?.toLowerCase().includes(term) ||
+    b.dropAddress?.city?.toLowerCase().includes(term) ||
+    b.dropAddress?.area?.toLowerCase().includes(term)
+  );
+});
 
-        <div className="flex justify-between items-center mb-6">
-          <button
-            onClick={openBookingIdModal}
-            className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition duration-150"
-          >
-            Update Booking Status
-          </button>
-          <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-medium">
-            {bookings.length} Active
-          </span>
-        </div>
 
-        {/* Booking List */}
-        {bookings.map((b) => (
-          <div
-            key={b.id}
-            className="border p-4 rounded-xl mb-4 shadow-md bg-white"
-          >
-            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
-              <span
-                className={`px-3 py-1 rounded-full text-white text-xs font-semibold ${statusBadgeColor(
-                  b.status
-                )}`}
-              >
-                {b.status}
-              </span>
-              <span className="text-gray-700 font-semibold">#{b.id}</span>
-              <span className="text-lg font-bold text-gray-900">{b.amount}</span>
-            </div>
+  /* ---------------- MODAL HELPERS ---------------- */
+  const closeModal = () =>
+    setModalState({ open: false, bookingId: null, chosenStatus: null });
 
-            <div className="mt-3 space-y-2">
-              <div className="text-sm flex items-center flex-wrap gap-x-6">
-                <span className="flex items-center gap-1 text-gray-700">
-                  <User className="w-4 h-4 text-purple-500" /> {b.customer.name}
-                </span>
-                <span className="flex items-center gap-1 text-gray-700">
-                  <Phone className="w-4 h-4 text-purple-500" /> {b.customer.phone}
-                </span>
-              </div>
+  const currentBooking = activeBookings.find(
+    (b) => b.id === modalState.bookingId
+  );
 
-              <div className="text-sm flex items-center flex-wrap gap-x-6">
-                <span className="flex items-center gap-1 text-gray-700">
-                  <Truck className="w-4 h-4 text-purple-500" /> {b.driver.name} | Vehicle:{" "}
-                  {b.driver.vehicle}
-                </span>
-              </div>
+  /* ---------------- UPDATE STATUS ---------------- */
+  const updateStatus = async () => {
+  if (!modalState.bookingId || !modalState.chosenStatus) return;
+  if (currentBooking?.pickupDate) {
+  const today = new Date();
 
-              <div className="text-sm flex items-center flex-wrap gap-x-6">
-                <span className="flex items-center gap-1 text-gray-700">
-                  <MapPin className="w-4 h-4 text-purple-500" /> Pickup:{" "}
-                  <strong>{b.pickup}</strong> → Drop: <strong>{b.drop}</strong>
-                </span>
-                <span className="flex items-center gap-1 text-gray-700">
-                  <Calendar className="w-4 h-4 text-purple-500" /> ETA: {b.eta}
-                </span>
-              </div>
-            </div>
-          </div>
-        ))}
+  const pickup = currentBooking.pickupDate?.toDate
+    ? currentBooking.pickupDate.toDate()
+    : new Date(currentBooking.pickupDate);
 
-        {/* Booking ID Modal */}
-        {modalState.type === "bookingId" && (
-            <div
-              className="fixed inset-0 pt-[88px] flex justify-center items-center bg-black bg-opacity-50 z-40"
-              onClick={closeModal}
-            >
+  if (today > pickup && currentBooking.status !== "COMPLETED") {
+    alert("Pickup date expired. Cannot update status.");
+    return;
+  }
+}
 
-            <div
-              className="bg-white w-full max-w-sm p-6 rounded-xl shadow-2xl relative"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                onClick={closeModal}
-                className="absolute top-4 right-4 text-gray-500 hover:text-gray-800"
-              >
-                <X />
-              </button>
-              <h2 className="text-xl font-semibold mb-4">Enter Booking ID</h2>
-              <input
-                type="text"
-                value={modalState.bookingIdInput}
-                onChange={(e) =>
-                  setModalState({ ...modalState, bookingIdInput: e.target.value })
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleTrack();
-                }}
-                placeholder="e.g., BK001"
-                className="w-full border p-3 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-              />
-              <button
-                onClick={handleTrack}
-                className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition duration-150"
-              >
-                Next →
-              </button>
-            </div>
-          </div>
-        )}
 
-        {/* Status Update Modal */}
-        {modalState.type === "status" && currentBooking && (
-                    <div
-              className="fixed inset-0 pt-[88px] flex items-center justify-center bg-black bg-opacity-50 z-40 p-4"
-              onClick={closeModal}
-            >
 
-            <div
-              className="bg-white w-full max-w-lg p-6 rounded-xl shadow-2xl relative"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                onClick={closeModal}
-                className="absolute top-4 right-4 text-gray-500 hover:text-gray-800"
-              >
-                <X />
-              </button>
+  try {
+    // 🔹 Always update booking status
+    await updateDoc(doc(db, "bookings", modalState.bookingId), {
+      status: modalState.chosenStatus,
+    });
 
-              <h2 className="text-2xl font-bold mb-4">
-                Update Status for #{currentBooking.id}
-              </h2>
-              <p className="text-sm text-gray-600 mb-4">
-                Current Status:{" "}
-                <span className="font-semibold text-purple-600">
-                  {currentBooking.status}
-                </span>
-              </p>
+    // 🔹 WHEN STATUS BECOMES IN_TRANSIT
+    if (modalState.chosenStatus === "COMPLETED") {
 
-              <div className="space-y-3">
-                {["Booked", "In Transit", "Out For Delivery", "Delivered"].map(
-                  (status) => (
-                    <div
-                      key={status}
-                      onClick={() =>
-                        setModalState({ ...modalState, chosenStatus: status })
-                      }
-                      className={`cursor-pointer border rounded-xl p-4 text-lg font-medium transition duration-150 ${
-                        modalState.chosenStatus === status
-                          ? "border-2 border-purple-600 bg-purple-50 text-purple-800"
-                          : "hover:bg-gray-50"
-                      }`}
-                    >
-                      {status}
-                    </div>
-                  )
-                )}
-              </div>
+      //  create 20-min upload token
+      const token = await createDriverUploadLink(modalState.bookingId);
 
-              <div className="flex justify-end mt-6 gap-3">
-                <button
-                  onClick={closeModal}
-                  className="px-4 py-2 rounded-lg border hover:bg-gray-100 transition duration-150"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={finalizeStatus}
-                  className="px-5 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition duration-150"
-                >
-                  Update
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+      //  create upload URL
+      const uploadUrl =
+        `${window.location.origin}/driver-upload/${token}`;
+
+      //  WhatsApp message
+      const msg = encodeURIComponent(
+        `Please upload delivery photos (valid for 20 minutes): ${uploadUrl}`
+      );
+
+      //  auto open WhatsApp
+      const waLink =
+        `https://wa.me/91${currentBooking.driverPhone}?text=${msg}`;
+
+      window.open(waLink, "_blank");
+    }
+
+    // 🔹 WHEN COMPLETED (existing logic)
+    if (modalState.chosenStatus === "COMPLETED") {
+      if (currentBooking?.vehicleId) {
+        await updateDoc(
+          doc(db, "vehicles", currentBooking.vehicleId),
+          { status: "Available" }
+        );
+      }
+    }
+
+    closeModal();
+  } catch (err) {
+    console.error("Status update failed:", err);
+  }
+};
+
+  /* ---------------- UI ---------------- */
+  return (
+    <div className="w-full min-h-screen bg-gray-100 p-6">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+  <div>
+    <h1 className="text-3xl font-bold text-gray-900">
+      Active Bookings
+    </h1>
+    <p className="text-gray-500 mt-1">
+      Manage and track ongoing deliveries
+    </p>
+  </div>
+
+  {/* SEARCH — OUTSIDE CARD */}
+  <div className="flex items-center gap-2">
+  <input
+    type="text"
+    placeholder="Search by Booking ID or Location"
+    value={searchTerm}
+    onChange={(e) => setSearchTerm(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter") handleSearch();
+    }}
+    className="border rounded-xl px-4 py-2 w-72
+               focus:outline-none focus:ring-2
+               focus:ring-purple-500"
+  />
+
+ <button
+  onClick={handleSearch}
+  className="px-4 py-2 rounded-xl bg-purple-600 text-white hover:bg-purple-700"
+>
+  Search
+</button>
+
+</div>
+
+</div>
+
+<Card className="bg-white rounded-2xl p-8">
+  <div className="flex items-center justify-between mb-4">
+    <div className="flex items-center gap-2 text-lg font-semibold text-purple-700">
+      <Truck size={24} /> Active Shipments
+    </div>
+
+
+    {/* FILTER */}
+    <BookingFilter
+      filterStatus={filterStatus}
+      setFilterStatus={setFilterStatus}
+    />
+</div>
+
+      {filteredBookings.length === 0 ? (
+  hasSearched ? (
+    <div className="text-center py-20 text-red-500 font-medium">
+      No such booking exists
+    </div>
+  ) : (
+    <div className="text-center py-20 text-gray-500">
+      No Active Bookings
+    </div>
+  )
+        
+      ) : (
+        filteredBookings.map((b) => (
+  <div
+    key={b.id}
+    className="bg-gradient-to-r from-blue-50 to-purple-50 
+               border rounded-2xl p-6 mb-6 shadow-sm"
+  >
+    {/* TOP ROW */}
+    <div className="flex justify-between items-start">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`px-3 py-1 rounded-full text-sm font-semibold ${statusBadgeColor(b.status)}`}>
+          {formatStatus(b.status)}
+        </span>
+
+        <span className="text-gray-500 font-small">
+          #{b.id}
+        </span>
       </div>
+
+      <p className="text-lg font-bold text-green-600">
+        ₹{b.price || b.amount || 0}
+      </p>
+    </div>
+
+    {/* CUSTOMER */}
+    <div className="flex items-center gap-3 mt-4 text-gray-800">
+      <User className="w-4 h-4 text-blue-600" />
+      <span className="font-medium">{b.customerName}</span>
+      <span className="text-gray-400">•</span>
+      <Phone className="w-4 h-4" />
+      <span>{b.phone || "N/A"}</span>
+
+    </div>
+      {/* DRIVER */}
+<div className="flex items-center gap-3 mt-3 text-gray-700">
+  <User className="w-4 h-4 text-indigo-600" />
+  <span>
+    <b>Driver:</b> {b.driverName || "Not Assigned"}
+  </span>
+</div>
+
+{/* VEHICLE */}
+<div className="flex items-center gap-3 mt-2 text-gray-700">
+  <Truck className="w-4 h-4 text-purple-600" />
+  <span>
+    <b>Vehicle:</b>{" "}
+    {b.vehicleId
+      ? vehiclesMap[b.vehicleId]?.type || "Loading..."
+      : "Not Assigned"}
+  </span>
+
+  {vehiclesMap[b.vehicleId]?.license && (
+    <>
+      <span className="text-gray-400">•</span>
+      <span>{vehiclesMap[b.vehicleId].license}</span>
+    </>
+  )}
+</div>
+    {/* PICKUP / DROP */}
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+      <div className="flex items-start gap-2">
+        <MapPin className="w-4 h-4 text-green-600 mt-1" />
+        <div>
+          <p className="text-1.5xs text-gray-500">Pickup</p>
+         <p className="font-medium">
+  {formatAddress(b.pickupAddress, b.pickup)}
+</p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-2">
+        <MapPin className="w-4 h-4 text-red-600 mt-1" />
+        <div>
+          <p className="text-1.5xs text-gray-500">Drop</p>
+          <p className="font-medium">
+  {formatAddress(b.dropAddress, b.destination)}
+</p>
+        </div>
+      </div>
+    </div>
+
+    {/* FOOTER */}
+    <div className="flex justify-between items-center mt-5 pt-4 border-t">
+      <p className="font-medium">
+  Pickup Date: {b.pickupDate || "N/A"}
+</p>
+
+
+
+      <button
+        onClick={() =>
+          setModalState({
+            open: true,
+            bookingId: b.id,
+            chosenStatus: b.status,
+          })
+        }
+        className="px-5 py-2 rounded-lg text-white 
+                   bg-gradient-to-r from-blue-600 to-purple-600 
+                   hover:opacity-90"
+      >
+        Update Status
+      </button>
+      
+    </div>
+  </div>
+
+))
+
+      )}
+
+      {/* ---------------- STATUS MODAL ---------------- */}
+      {modalState.open && currentBooking && (
+        <div
+          className="fixed inset-0 flex items-center justify-center bg-black/50 z-50"
+          onClick={closeModal}
+        >
+          <div
+            className="bg-white p-6 rounded-xl w-full max-w-lg relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="absolute top-4 right-4"
+              onClick={closeModal}
+            >
+              <X />
+            </button>
+
+            <h2 className="text-2xl font-bold mb-4">
+              Update Status – #{currentBooking.id}
+            </h2>
+
+            {[
+              { label: "Booking Placed", value: "BOOKING_PLACED" },
+              { label: "In Transit", value: "IN_TRANSIT" },
+              { label: "Completed", value: "COMPLETED" },
+            ].map((s) => (
+              <div
+                key={s.value}
+                onClick={() =>
+                  setModalState((prev) => ({
+                    ...prev,
+                    chosenStatus: s.value,
+                  }))
+                }
+                className={`p-4 border rounded-xl cursor-pointer mb-3 ${
+                  modalState.chosenStatus === s.value
+                    ? "border-purple-600 bg-purple-50"
+                    : ""
+                }`}
+              >
+                {s.label}
+              </div>
+            ))}
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={closeModal}
+                className="px-4 py-2 border rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={updateStatus}
+                className="px-5 py-2 bg-purple-600 text-white rounded"
+              >
+                Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </Card>
     </div>
   );
 }

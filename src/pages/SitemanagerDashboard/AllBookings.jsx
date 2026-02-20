@@ -1,47 +1,68 @@
 import { CalendarCheck, CheckCircle, AlertTriangle, Eye } from "lucide-react";
-import { useState } from "react";
-
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "../../firebase";
+import { useEffect, useState } from "react";
+import BookingDetails from "./BookingDetails";
 export default function AllBookings() {
   const [search, setSearch] = useState("");
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedBookingId, setSelectedBookingId] = useState(null);
+const normalizeStatus = (status) => {
+  switch (status) {
+    case "BOOKED":
+    case "ASSIGNED":
+    case "IN_TRANSIT":
+      return "active";
 
-  const bookings = [
-    {
-      trackId: "#TRK789456123",
-      status: "active",
-      adminHold: true,
-      customer: "Michael Brown",
-      from: "Ahmedabad, Gujarat",
-      to: "Jaipur, Rajasthan",
-      agency: "Swift Logistics",
-      date: "Nov 5, 2025",
-      amount: 28000,
-      release: false,
-    },
-    {
-      trackId: "#TRK456123789",
-      status: "completed",
-      adminHold: true,
-      customer: "Priya Sharma",
-      from: "Kolkata, West Bengal",
-      to: "Bhubaneswar, Odisha",
-      agency: "Express Transport",
-      date: "Nov 6, 2025",
-      amount: 15000,
-      release: true,
-    },
-    {
-      trackId: "#TRK789123456",
-      status: "disputed",
-      adminHold: true,
-      customer: "Rahul Mehta",
-      from: "Mumbai, Maharashtra",
-      to: "Pune, Maharashtra",
-      agency: "QuickShip",
-      date: "Nov 7, 2025",
-      amount: 22000,
-      release: false,
-    },
-  ];
+    case "COMPLETED":
+      return "completed";
+
+    case "DISPUTED":
+      return "disputed";
+
+    default:
+      return "active";
+  }
+};
+useEffect(() => {
+  const q = query(
+    collection(db, "bookings"),
+    where("paidAt", "!=", null)
+  );
+
+  const unsub = onSnapshot(q, (snapshot) => {
+    const list = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        trackId: `#${doc.id.slice(0, 10).toUpperCase()}`,
+        customer: data.customerName,
+        agency: data.agencyName,
+        from: `${data.pickupAddress.city}, ${data.pickupAddress.state}`,
+        to: `${data.dropAddress.city}, ${data.dropAddress.state}`,
+        amount: Math.round(data.price),
+        date: data.createdAt?.toDate(),
+        adminHold: true,
+        status: normalizeStatus(data.status),
+      };
+    });
+
+    setBookings(list);
+    setLoading(false);
+  });
+  return () => unsub();
+}, []);
+if (loading) {
+  return <div className="p-6">Loading bookings...</div>;
+}
+
+const formatDate = (date) =>
+  date?.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 
   const STATUS = {
     active: { bg: "bg-blue-50", text: "text-blue-600", icon: <CalendarCheck size={14} />, label: "Active" },
@@ -53,10 +74,11 @@ export default function AllBookings() {
   // Filter bookings based on search input (from/to locations or booking ID)
   const filteredBookings = bookings.filter(
     (b) =>
-      b.from.toLowerCase().includes(search.toLowerCase()) ||
-      b.to.toLowerCase().includes(search.toLowerCase()) ||
-      b.trackId.toLowerCase().includes(search.toLowerCase())
-  );
+      (b.from || "").toLowerCase().includes(search.toLowerCase()) ||
+      (b.to || "").toLowerCase().includes(search.toLowerCase()) ||
+      (b.trackId || "").toLowerCase().includes(search.toLowerCase())
+);
+
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen space-y-6">
@@ -68,7 +90,7 @@ export default function AllBookings() {
         </div>
         <input
           type="text"
-          placeholder="Search by location or booking ID..."
+          placeholder="Search by location or booking ID"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -76,8 +98,16 @@ export default function AllBookings() {
       </div>
 
       {/* Booking Cards */}
-      <div className="space-y-4">
-        {filteredBookings.map((b, i) => {
+          <div className="space-y-4">
+
+          {filteredBookings.length === 0 && (
+            <div className="text-center text-gray-500 py-10">
+              No bookings found
+            </div>
+          )}
+
+          {filteredBookings.map((b, i) => {
+
           const mainStatus = STATUS[b.status];
           const adminStatus = STATUS.admin;
           return (
@@ -131,27 +161,34 @@ export default function AllBookings() {
               <div className="flex justify-between items-center text-sm text-gray-500">
                 <div className="flex items-center gap-2">
                   <CalendarCheck size={14} />
-                  <span>{b.date}</span>
+                  <span>{formatDate(b.date)}</span>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <span className="text-green-600 font-semibold">
                     ₹{b.amount.toLocaleString()}
                   </span>
-                  <button className="flex items-center gap-1 px-3 py-1 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 transition">
-                    <Eye size={14} /> View
-                  </button>
-                  {b.release && (
-                    <button className="px-3 py-1 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition">
-                      Release Payment
-                    </button>
-                  )}
+                  <button
+                  onClick={() => setSelectedBookingId(b.id)}
+                  className="flex items-center gap-1 px-3 py-1 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+                >
+                  <Eye size={14} /> View
+                </button>
+
+
                 </div>
               </div>
             </div>
           );
         })}
       </div>
+      {selectedBookingId && (
+              <BookingDetails
+                bookingId={selectedBookingId}
+                onClose={() => setSelectedBookingId(null)}
+              />
+            )}
+
     </div>
   );
 }

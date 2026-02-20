@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import smallTruck from "../assets/smalltruck.png";
 
 export default function Header() {
   const location = useLocation();
@@ -6,12 +7,10 @@ export default function Header() {
 
   const path = location.pathname;
 
-  // READ MODE FROM URL
   const params = new URLSearchParams(location.search);
-  const mode = params.get("mode"); // "login" | null
+  const mode = params.get("mode");
   const isLoginMode = mode === "login";
 
-  // PAGE DETECTION
   const isLogin = path.includes("/login");
   const isSignup = path.includes("/signup");
   const isSelectUser = path === "/select-user";
@@ -22,18 +21,37 @@ export default function Header() {
   return (
     <header className="flex justify-between items-center px-10 py-6 bg-white shadow-sm">
 
-      {/* LOGO */}
-      <h1
-        className="text-2xl font-bold text-purple-700 cursor-pointer"
-        onClick={() => navigate("/")}
-      >
-        MoveMate
-      </h1>
+      {/* ================= LEFT LOGO ================= */}
+      {isSelectUser ? (
+        /* -------- SELECT USER PAGE (NEW HEADER) -------- */
+        <div
+          className="flex items-center space-x-3 cursor-pointer"
+          onClick={() => navigate("/")}
+        >
+          <div className="bg-gradient-to-r from-purple-600 to-indigo-600 p-2 rounded-xl">
+            <img src={smallTruck} alt="MoveMate Logo" className="w-6 h-6" />
+          </div>
 
-      {/* RIGHT SIDE */}
+          <div className="flex flex-col leading-tight">
+            <h1 className="text-xl font-bold text-gray-900">MoveMate</h1>
+            <span className="text-sm text-gray-500 -mt-1">
+              Goods Transportation Platform
+            </span>
+          </div>
+        </div>
+      ) : (
+        /* -------- DEFAULT OLD HEADER -------- */
+        <h1
+          className="text-2xl font-bold text-purple-700 cursor-pointer"
+          onClick={() => navigate("/")}
+        >
+          MoveMate
+        </h1>
+      )}
+
+      {/* ================= RIGHT SIDE ================= */}
       <div className="flex items-center gap-4">
 
-        {/* LOGIN PAGE */}
         {isLogin && (
           <>
             <span className="text-sm text-gray-600">
@@ -42,11 +60,7 @@ export default function Header() {
             <button
               className="px-6 py-2 bg-purple-600 text-white rounded-xl"
               onClick={() =>
-                navigate(
-                  isCustomer
-                    ? "/signup/customer"
-                    : "/signup/agency"
-                )
+                navigate(isCustomer ? "/signup/customer" : "/signup/agency")
               }
             >
               Sign Up
@@ -54,7 +68,6 @@ export default function Header() {
           </>
         )}
 
-        {/* SIGNUP PAGE */}
         {isSignup && (
           <>
             <span className="text-sm text-gray-600">
@@ -63,11 +76,7 @@ export default function Header() {
             <button
               className="px-6 py-2 bg-purple-600 text-white rounded-xl"
               onClick={() =>
-                navigate(
-                  isCustomer
-                    ? "/login/customer"
-                    : "/login/agency"
-                )
+                navigate(isCustomer ? "/login/customer" : "/login/agency")
               }
             >
               Sign In
@@ -75,7 +84,6 @@ export default function Header() {
           </>
         )}
 
-        {/* SELECT USER – SIGNUP MODE */}
         {isSelectUser && !isLoginMode && (
           <>
             <span className="text-sm text-gray-600">
@@ -90,7 +98,6 @@ export default function Header() {
           </>
         )}
 
-        {/* SELECT USER – LOGIN MODE */}
         {isSelectUser && isLoginMode && (
           <>
             <span className="text-sm text-gray-600">
@@ -104,7 +111,6 @@ export default function Header() {
             </button>
           </>
         )}
-
       </div>
     </header>
   );

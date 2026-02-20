@@ -14,20 +14,21 @@ import {
   FileText,
   LogOut,
   Menu, 
-  X
+  X,
+  Settings
 } from "lucide-react";
-
+import CustomerSettings from "./CustomerSettings";
 import Footer from "../../components/Footer";
 import NewBooking from "./NewBooking";
-import TrackShipment from "./TrackShipment";
+import TrackShipment from "./Trackshipment";
 import AllBookings from "./AllBookings";
 import Swal from "sweetalert2";
 import { signOut } from "firebase/auth";
-import { auth } from "../../firebase";
+import { auth } from "../../Firebase";
 import { useNavigate } from "react-router-dom";
 import React, { useState, useEffect } from "react";
 // import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
-import { db } from "../../firebase"; 
+import { db } from "../../Firebase"; 
 import {
   collection,
   query,
@@ -36,10 +37,20 @@ import {
   limit,
   onSnapshot,
   doc,
-  getDoc
 } from "firebase/firestore";
+import { getDoc, deleteDoc, updateDoc } from "firebase/firestore";
 
 export default function Dashboard() {
+  const [stats, setStats] = useState({
+  total: 0,
+  active: 0,
+  completed: 0,
+  pending: 0,
+  monthly: 0
+});
+
+const [recentActivities, setRecentActivities] = useState([]);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAllBookings, setShowAllBookings] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -49,6 +60,12 @@ export default function Dashboard() {
   // const [recentActivities, setRecentActivities] = useState([]);
   const navigate = useNavigate();
   const [kycStatus, setKycStatus] = useState("");
+  const [notifications, setNotifications] = useState([]);
+const [showNotifications, setShowNotifications] = useState(false);
+const notifRef = React.useRef(null);
+const [avgDelivery, setAvgDelivery] = useState("—");
+
+
 
   const timeAgo = (date) => {
     if (!date) return "";
@@ -63,7 +80,60 @@ export default function Dashboard() {
     return `${Math.floor(diff / 86400)} days ago`;
   };
   useEffect(() => {
+  const handleClickOutside = (e) => {
+    if (notifRef.current && !notifRef.current.contains(e.target)) {
+      setShowNotifications(false);
+    }
+  };
+
+  document.addEventListener("mousedown", handleClickOutside);
+  return () => document.removeEventListener("mousedown", handleClickOutside);
+}, []);
+
+  useEffect(() => {
+  if (kycStatus === "REJECTED") {
+    const showRejectedAlert = async () => {
+      //  Get user document
+      const docRef = doc(db, "customers", auth.currentUser.uid);
+      const docSnap = await getDoc(docRef);
+
+      //  Get the reason dynamically
+      let reason = "Your account verification failed. Please try signup again.";
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        reason = data?.kyc?.review?.reason || data?.kyc?.reason || reason;
+      }
+
+      //  Show alert with reason
+      await Swal.fire({
+        icon: "error",
+        title: "Verification Failed",
+        html: `
+          <p>Your account verification failed due to <b>${reason}</b>.<br/>
+          Please try signup again.</p>
+          `,
+        confirmButtonColor: "#d33",
+      });
+
+      // 4️⃣ Delete Firestore record
+      await deleteDoc(doc(db, "customers", auth.currentUser.uid));
+
+      // 5️⃣ Logout
+      await signOut(auth);
+
+      // 6️⃣ Redirect to signup
+      navigate("/signup/customer");
+    };
+
+    showRejectedAlert();
+  }
+}, [kycStatus, navigate]);
+
+
+  useEffect(() => {
   let unsubscribeBookings = null;
+  let unsubscribeNotifications = null;
+
   const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
     if (!user) return;
 
@@ -74,23 +144,63 @@ export default function Dashboard() {
     const docRef = doc(db, "customers", user.uid);
     const docSnap = await getDoc(docRef);
 
-    if (docSnap.exists() && docSnap.data().fullName) {
-      setKycStatus(docSnap.data().kycStatus?.toLowerCase());
-      fullName = docSnap.data().fullName;
-    } else if (user.displayName) {
-      fullName = user.displayName;
-    } else if (email) {
-      fullName = email.split("@")[0];
-    } else {
-      fullName = "User";
-    }
+    if (docSnap.exists()) {
+  const data = docSnap.data();         // get all data once
+  const kycData = data.kyc;           
+  setKycStatus(kycData?.status || "");
 
-    setUserData({ fullName, email });
+  fullName = data.fullName || email.split("@")[0] || "User";
+} else if (user.displayName) {
+  fullName = user.displayName;
+} else if (email) {
+  fullName = email.split("@")[0];
+} else {
+  fullName = "User";
+}
+
+setUserData({ fullName, email });
+// ---------- NOTIFICATIONS ----------
+const notifQuery = query(
+  collection(db, "notifications"),
+  where("userId", "==", user.uid),
+  orderBy("createdAt", "desc"),
+  limit(20)
+);
+
+unsubscribeNotifications = onSnapshot(notifQuery, async (snap) => {
+  const now = new Date();
+  const fresh = [];
+  const oldDocs = [];
+
+  snap.docs.forEach((docSnap) => {
+    const data = docSnap.data();
+    const createdAt = data.createdAt?.toDate();
+
+    if (!createdAt) return;
+
+    const diffDays = (now - createdAt) / (1000 * 60 * 60 * 24);
+
+    if (diffDays > 5) {
+      oldDocs.push(docSnap.id);      //  delete from DB
+    } else {
+      fresh.push({ id: docSnap.id, ...data });  //  show in UI
+    }
+  });
+
+  // 🧹 Delete old notifications from Firestore
+  for (const id of oldDocs) {
+    await deleteDoc(doc(db, "notifications", id));
+  }
+
+  setNotifications(fresh);
+});
+
+
 
     // ---------- RECENT BOOKING ----------
    const q = query(
   collection(db, "bookings"),
-  where("userId", "==", user.uid),
+  where("customerId", "==", user.uid),
   orderBy("createdAt", "desc"),
   limit(1)
 );
@@ -109,10 +219,126 @@ export default function Dashboard() {
   });
 
   return () => {
-    if (unsubscribeBookings) unsubscribeBookings();
+  if (unsubscribeBookings) unsubscribeBookings();
+  if (unsubscribeNotifications) unsubscribeNotifications();
+  unsubscribeAuth();
+};
+
+}, []);
+useEffect(() => {
+  let unsubscribeBookings;
+
+  const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, "bookings"),
+      where("customerId", "==", user.uid)
+    );
+
+    unsubscribeBookings = onSnapshot(q, (snap) => {
+      const priority = {
+  "Delivery completed": 1,
+  "Shipment in transit": 2,
+  "Booking confirmed by agency": 3,
+  "Payment successful": 4,
+  "Booking created": 5
+};
+
+const bucket = {};
+let total = 0, active = 0, completed = 0, pending = 0;
+let monthCount = 0;
+const now = new Date();
+const month = now.getMonth();
+const year = now.getFullYear();
+
+snap.docs.forEach((doc) => {
+  const b = doc.data();
+  const id = doc.id;
+  total++;
+
+if (["IN_TRANSIT", "BOOKING_PLACED"].includes(b.status)) active++;
+else if (b.status === "COMPLETED") completed++;
+else pending++;
+
+if (b.createdAt) {
+  const d = b.createdAt.toDate();
+  if (d.getMonth() === month && d.getFullYear() === year) {
+    monthCount++;
+  }
+}
+
+  
+
+  let label, time, ref = id;
+
+  if (b.status === "COMPLETED") {
+    label = "Delivery completed";
+    time = b.completedAt || b.createdAt;
+  }
+  else if (b.status === "IN_TRANSIT") {
+    label = "Shipment in transit";
+    time = b.updatedAt || b.createdAt;
+  }
+  else if (b.status === "ASSIGNED") {
+    label = "Booking confirmed by agency";
+    time = b.assignedAt || b.createdAt;
+  }
+  else if (b.status === "PAYMENT_CONFIRMED") {
+    label = "Payment successful";
+    time = b.paymentConfirmedAt || b.createdAt;
+    ref = `₹${b.price}`;
+  }
+  else {
+    label = "Booking created";
+    time = b.createdAt;
+  }
+
+  if (!bucket[label] || bucket[label].time.toDate() < time.toDate()) {
+    bucket[label] = { label, time, ref };
+  }
+});
+setStats({ total, active, completed, pending, monthly: monthCount });
+
+const activities = Object.values(bucket)
+  .sort((a, b) => b.time.toDate() - a.time.toDate())
+  .sort((a, b) => priority[a.label] - priority[b.label])
+  .slice(0, 4);
+
+setRecentActivities(activities);
+//  Average Delivery Calculation
+let totalDeliveryHours = 0;
+let deliveredCount = 0;
+
+snap.docs.forEach((doc) => {
+  const b = doc.data();
+
+  if (b.status === "COMPLETED" && b.createdAt && b.completedAt) {
+    const start = b.createdAt.toDate();
+    const end = b.completedAt.toDate();
+
+    const hours = (end - start) / (1000 * 60 * 60);
+    totalDeliveryHours += hours;
+    deliveredCount++;
+  }
+});
+
+if (deliveredCount > 0) {
+  const avgDays = (totalDeliveryHours / deliveredCount) / 24;
+  setAvgDelivery(avgDays.toFixed(1));
+} else {
+  setAvgDelivery("—");
+}
+
+    });
+  });
+
+  return () => {
     unsubscribeAuth();
+    if (unsubscribeBookings) unsubscribeBookings();
   };
 }, []);
+
   const handleLogout = async () => {
   const result = await Swal.fire({
     title: "Logout?",
@@ -167,19 +393,19 @@ export default function Dashboard() {
 
   const SidebarItem = ({ icon, label, pageKey }) => {
   const handleClick = () => {
-    if (pageKey === "newBooking" && kycStatus === "manual_review") {
+    if (pageKey === "newBooking" && kycStatus === "MANUAL_REVIEW") {
     Swal.fire({
       icon: "warning",
       title: "KYC Under Review",
       text: "Your KYC is under manual review. You can create a booking once it is verified.",
       confirmButtonColor: "#7c3aed",
     });
-    return; // ⛔ page change stop
+    return; //  page change stop
   }
     if (pageKey === "logout") {
-      handleLogout();        // 🔴 logout action
+      handleLogout();        //  logout action
     } else {
-      setActivePage(pageKey); // 🟢 normal pages
+      setActivePage(pageKey); //  normal pages
     }
   };
 
@@ -201,6 +427,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex min-h-screen bg-gray-100">
+      
       {/* ----------------- SIDEBAR ----------------- */}
       <div
         className={`fixed top-0 left-0 h-full w-64 bg-white shadow-xl p-6 z-50 transform transition-transform duration-300
@@ -221,6 +448,7 @@ export default function Dashboard() {
           <SidebarItem icon={<PlusCircle size={16} />} label="New Booking" pageKey="newBooking" />
           <SidebarItem icon={<FileText size={16} />} label="All Bookings" pageKey="all" />
           <SidebarItem icon={<Search size={16} />} label="Track Shipment" pageKey="track" />
+          <SidebarItem icon={<Settings size={16} />} label="Settings" pageKey="settings" />
         </div>
 
         <hr className="my-4" />
@@ -273,7 +501,44 @@ export default function Dashboard() {
 
   {/* Right side profile + bell */}
   <div className="flex items-center gap-6 relative">
+    <div className="relative" ref={notifRef}>
+  <button onClick={() => setShowNotifications(!showNotifications)}>
     <BellIcon className="w-6 h-6 text-gray-700 cursor-pointer" />
+    {notifications.some(n => !n.read) && (
+      <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full" />
+    )}
+  </button>
+
+  {showNotifications && (
+  <div className="absolute right-0 mt-2 w-72 max-h-80 bg-white shadow-lg rounded-lg z-50 p-2
+                  overflow-y-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-100">
+      {notifications.length === 0 ? (
+        <div className="p-4 text-gray-500">No notifications</div>
+      ) : (
+        notifications.map((n) => (
+          <div
+            key={n.id}
+            className={`p-2 rounded mb-2 text-sm cursor-pointer ${
+              n.read ? "bg-gray-100" : "bg-purple-50"
+            }`}
+            onClick={async () => {
+              if (!n.read) {
+                await updateDoc(doc(db, "notifications", n.id), { read: true });
+              }
+            }}
+          >
+           {n.title && <div className="font-medium">{n.title}</div>}
+<div className="text-xs text-gray-700">{n.message}</div>
+            <div className="text-xs text-gray-400 mt-1">
+              {n.createdAt?.toDate().toLocaleString()}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  )}
+</div>
+
     <div className="h-6 w-px bg-gray-300" />
 
     <div
@@ -312,11 +577,16 @@ export default function Dashboard() {
     </div>
   </div>
 </div>
+{kycStatus === "MANUAL_REVIEW" && (
+  <div className="mb-4 p-4 rounded-lg bg-yellow-100 border border-yellow-400 text-yellow-800">
+    ⚠ Your account is under verification. You cannot create bookings yet.
+  </div>
+)}
 
         {/* ----------------- HEADER ----------------- */}
         {activePage === "overview" ? (
           <header className="mt-6">
-            <h1 className="text-5xl font-semibold">
+            <h1 className="text-4xl font-semibold">
   Welcome back, {userData.fullName || "User"}! 👋
 </h1>
 
@@ -342,7 +612,7 @@ export default function Dashboard() {
               <CardContent className="p-4 flex justify-between items-center hover:-translate-y-1 transition">
                 <div>
                   <p>Total Bookings</p>
-                  <h2 className="text-3xl font-bold mt-2">X</h2>
+                  <h2 className="text-3xl font-bold mt-2">{stats.total}</h2>
                 </div>
                 <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
                   <Box className="w-10 h-10" />
@@ -354,7 +624,7 @@ export default function Dashboard() {
               <CardContent className="p-4 flex justify-between items-center hover:-translate-y-1 transition">
                 <div>
                   <p>Active Shipments</p>
-                  <h2 className="text-3xl font-bold mt-2">X</h2>
+                  <h2 className="text-3xl font-bold mt-2">{stats.active}</h2>
                 </div>
                 <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
                   <Truck className="w-10 h-10" />
@@ -366,7 +636,7 @@ export default function Dashboard() {
               <CardContent className="p-4 flex justify-between items-center hover:-translate-y-1 transition">
                 <div>
                   <p>Completed</p>
-                  <h2 className="text-3xl font-bold mt-2">X</h2>
+                  <h2 className="text-3xl font-bold mt-2">{stats.completed}</h2>
                 </div>
                 <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
                   <CheckCircle className="w-10 h-10" />
@@ -378,7 +648,7 @@ export default function Dashboard() {
               <CardContent className="p-4 flex justify-between items-center hover:-translate-y-1 transition">
                 <div>
                   <p>Pending</p>
-                  <h2 className="text-3xl font-bold mt-2">X</h2>
+                  <h2 className="text-3xl font-bold mt-2">{stats.pending}</h2>
                 </div>
                 <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
                   <Clock className="w-10 h-10" />
@@ -404,133 +674,29 @@ export default function Dashboard() {
       >
         ⚡ Overview
       </button>
-
-      {/* <button
-        onClick={() => setShowAllBookings(true)}
-        className={`px-5 py-2 rounded-full font-medium ${
-          showAllBookings ? "text-white" : "text-black"
-        }`}
-        style={
-          showAllBookings
-            ? { background: "linear-gradient(90deg,#3b82f6,#a855f7)" }
-            : {}
-        }
-      >
-        🕒 All Bookings
-      </button> */}
     </div>
   </div>
 )}
-
-
-        {/* ----------------- ACTION REQUIRED ----------------- */}
-        {/* {!showAllBookings && activePage === "overview" && (
-          <section className="mt-6">
-            <h2 className="text-xl font-semibold mb-3">Action Required</h2>
-
-            <Card className="border-l-4 border-yellow-500 bg-yellow-50 rounded-xl shadow-sm hover:shadow-xl transition cursor-pointer">
-              <CardContent className="p-4 space-y-3">
-                <div className="flex justify-between">
-                  <div>
-                    <p className="text-sm text-orange-600 font-semibold">Payment Pending</p>
-                    <p className="font-medium">FastMove Express ⭐4.6</p>
-                    <p className="text-sm text-gray-700">Pickup: Pune</p>
-                    <p className="text-sm text-gray-700">Drop: Bangalore</p>
-                  </div>
-
-                  <p className="text-xl font-bold text-green-800">₹18,500</p>
-                </div>
-
-                <div className="flex gap-3 mt-2">
-                  <Button className="bg-green-600 text-white">💳 Make Payment</Button>
-                  <Button className="bg-red-100 text-red-600 border border-red-300">
-                    ❌ Cancel
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </section>
-        )} */}
-
-        {/* ----------------- ACTIVE SHIPMENTS ----------------- */}
-        {/* {activePage === "overview" && (
-          <section>
-            <h2 className="text-xl font-semibold mb-3">Active Shipments</h2>
-            <Card className="border-l-4 border-blue-500 bg-blue-50 rounded-xl shadow-sm hover:shadow-xl transition">
-              <CardContent className="p-4 space-y-3">
-                <p className="text-blue-600 font-semibold">In Transit</p>
-                <p className="font-medium">Swift Logistics</p>
-                <p className="text-sm text-gray-700">Mumbai → Delhi</p>
-                <p className="text-sm text-gray-500">ETA: Nov 15, 2025</p>
-
-                <div className="flex justify-between">
-                  <p className="text-xl font-bold text-green-700">₹35,000</p>
-
-                  <div className="space-x-3">
-                    <Button variant="outline">Contact</Button>
-                    <Button className="bg-blue-600 text-white">Track</Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </section>
-        )} */}
         {/* ----------------- RECENT ACTIVITY ----------------- */}
-          {activePage === "overview" && (
-            <Card className="mt-10 rounded-2xl shadow-lg bg-white hover:shadow-xl transition">
-              <CardContent className="p-6">
-                <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                  🕒 Recent Activity
-                </h2>
-
-                <div className="space-y-4">
-
-                  {/* Payment successful */}
-                  <div className="flex items-start gap-3">
-                    <span className="w-3 h-3 bg-green-500 rounded-full mt-1" />
-                    <div>
-                      <p className="font-medium">Payment successful</p>
-                      <p className="text-gray-500 text-sm">
-                        BK001 • ₹35,000
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Shipment in transit */}
-                  <div className="flex items-start gap-3">
-                    <span className="w-3 h-3 bg-blue-500 rounded-full mt-1" />
-                    <div>
-                      <p className="font-medium">Shipment in transit</p>
-                      <p className="text-gray-500 text-sm">
-                        BK001 • 2 hours ago
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Agency confirmed booking */}
-                  <div className="flex items-start gap-3">
-                    <span className="w-3 h-3 bg-purple-500 rounded-full mt-1" />
-                    <div>
-                      <p className="font-medium">Agency confirmed booking</p>
-                      <p className="text-gray-500 text-sm">
-                        BK002 • 5 hours ago
-                      </p>
-                    </div>
-                  </div>
-                 {/* Booking created */}
-              <div className="flex items-start gap-3">
-                  <span className="w-3 h-3 bg-yellow-500 rounded-full mt-1" />
-                  <div>
-                    <p className="font-medium">Booking created</p>
-                    <p className="text-gray-500 text-sm">
-                      BK003 • 1 day ago
-                    </p>
-                  </div>
-                </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+        {activePage === "overview" && (
+  <div className="space-y-4">
+    {recentActivities.length === 0 ? (
+      <p className="text-gray-500 text-sm">No recent activity</p>
+    ) : (
+      recentActivities.map((a, i) => (
+        <div key={i} className="flex items-start gap-3">
+          <span className="w-3 h-3 bg-blue-500 rounded-full mt-1" />
+          <div>
+            <p className="font-medium">{a.label}</p>
+            <p className="text-gray-500 text-sm">
+              {a.ref} • {timeAgo(a.time?.toDate())}
+            </p>
+          </div>
+        </div>
+      ))
+    )}
+  </div>
+)}
 
       {/* ----------------- THIS MONTH ----------------- */}
         {activePage === "overview" && (
@@ -542,13 +708,16 @@ export default function Dashboard() {
 
             <div className="grid grid-cols-2 gap-y-4">
               <p className="text-lg">Bookings</p>
-              <p className="text-lg text-right">8 trips</p>
+             <p className="text-lg text-right">{stats.monthly} trips</p>
 
               {/* <p className="text-lg">Amount</p>
               <p className="text-lg text-right">₹1,42,000</p> */}
 
               <p className="text-lg">Avg. Delivery</p>
-              <p className="text-lg text-right">2.5 days</p>
+              <p className="text-lg text-right">
+              {avgDelivery !== "—" ? `${avgDelivery} days` : "—"}
+              </p>
+
             </div>
           </div>
         )}
@@ -559,7 +728,7 @@ export default function Dashboard() {
         {activePage === "newBooking" && <NewBooking />}
         {activePage === "track" && <TrackShipment />}
         {activePage === "all" && <AllBookings />}
-        
+       {activePage === "settings" && <CustomerSettings userData={userData} />}
 
         {/* ----------------- FOOTER ----------------- */}
         <Footer />

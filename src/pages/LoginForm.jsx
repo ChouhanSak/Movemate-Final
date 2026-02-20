@@ -4,11 +4,10 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Eye, EyeOff, ArrowLeft, Info } from "lucide-react";
-
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import Swal from "sweetalert2";
 import { useNavigate } from "react-router-dom";
-
-import { auth, db } from "../firebase";
+import { auth, db } from "../Firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 
@@ -79,6 +78,56 @@ export default function LoginForm({ userType }) {
 
     setLoading(false);
   };
+const handleGoogleLogin = async () => {
+  setLoading(true);
+
+  try {
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+
+    const uid = result.user.uid;
+
+    const collectionName =
+      userType === "customer" ? "customers" : "agencies";
+
+    const snap = await getDoc(doc(db, collectionName, uid));
+
+    if (!snap.exists()) {
+      Swal.fire({
+        icon: "error",
+        title: "Account Not Found",
+        text: `No ${userType} record found. Please sign up first.`,
+      });
+      setLoading(false);
+      return;
+    }
+
+    const userData = snap.data();
+
+    Swal.fire({
+      icon: "success",
+      title: "Login Successful",
+      text: `Welcome ${userData.fullName || "User"} 👋`,
+      timer: 1500,
+      showConfirmButton: false,
+    }).then(() => {
+      if (userType === "customer") {
+        navigate("/customer-dashboard");
+      } else {
+        navigate("/agency-dashboard");
+      }
+    });
+
+  } catch (error) {
+    Swal.fire({
+      icon: "error",
+      title: "Login Failed",
+      text: error.message,
+    });
+  }
+
+  setLoading(false);
+};
 
   const portalInfo =
     userType === "customer"
@@ -179,8 +228,28 @@ export default function LoginForm({ userType }) {
               >
                 {loading ? "Signing in..." : "Sign In"}
               </Button>
+              {/* GOOGLE LOGIN BUTTON */}
+<div className="mt-4">
+ <button
+  type="button"
+  onClick={handleGoogleLogin}
+  disabled={loading}
+  className="w-full h-12 bg-white border border-gray-300 
+             text-gray-800 font-semibold 
+             rounded-md 
+             hover:bg-gray-100 
+             transition 
+             flex items-center justify-center gap-3"
+>
+  <img
+    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+    alt="google"
+    className="w-5 h-5"
+  />
+  Continue with Google
+</button>
+</div>
             </form>
-
             {/* SIGNUP LINK */}
             <p className="text-center text-sm mt-4">
               Don’t have an account?{" "}

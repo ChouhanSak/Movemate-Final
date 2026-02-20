@@ -5,13 +5,147 @@ import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import Swal from "sweetalert2"; // ⭐ POPUP ADDED
 import { useNavigate } from "react-router-dom";
-
-
+import { collection, query, where, getDocs } from "firebase/firestore";
+const STATES = [
+  "Andhra Pradesh",
+  "Arunachal Pradesh",
+  "Assam",
+  "Bihar",
+  "Chhattisgarh",
+  "Goa",
+  "Gujarat",
+  "Haryana",
+  "Himachal Pradesh",
+  "Jharkhand",
+  "Karnataka",
+  "Kerala",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Manipur",
+  "Meghalaya",
+  "Mizoram",
+  "Nagaland",
+  "Odisha",
+  "Punjab",
+  "Rajasthan",
+  "Sikkim",
+  "Tamil Nadu",
+  "Telangana",
+  "Tripura",
+  "Uttar Pradesh",
+  "Uttarakhand",
+  "West Bengal",
+  "Delhi",
+  "Jammu and Kashmir",
+  "Ladakh",
+  "Puducherry",
+];
+const ONLY_ALPHABETS_REGEX = /^[A-Za-z\s]*$/;
+const BANKS = [
+  "State Bank of India",
+  "HDFC Bank",
+  "ICICI Bank",
+  "Axis Bank",
+  "Punjab National Bank",
+  "Bank of Baroda",
+  "Canara Bank",
+  "Union Bank of India",
+  "Kotak Mahindra Bank",
+  "IndusInd Bank",
+  "IDFC First Bank",
+  "Yes Bank",
+  "Federal Bank",
+  "AU Small Finance Bank",
+  "Bandhan Bank",
+];
 export default function SignupAgency({ onBack }) {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
-  const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
+  const [showBankDropdown, setShowBankDropdown] = useState(false);
+  const [showStateDropdown, setShowStateDropdown] = useState(false);
+  const [alphaErrors, setAlphaErrors] = useState({
+  fullName: false,
+  city: false,
+  state: false,
+  agencyName: false,
+});
+
+  //TAN: 4 letters + 5 digits + 1 letter
+const TAN_REGEX = /^[A-Z]{4}\d{5}[A-Z]$/;
+//Registration Number: ONLY digits, 6–10 digits
+const REGISTRATION_REGEX = /^\d{6,10}$/;
+const checkDuplicateAgency = async () => {
+  const agenciesRef = collection(db, "agencies");
+
+  // ----- TAN CHECK -----
+  const tanQuery = query(
+    agenciesRef,
+    where("tanNumber", "==", formData.tanNumber)
+  );
+  const tanSnap = await getDocs(tanQuery);
+
+  if (!tanSnap.empty) {
+    Swal.fire({
+      icon: "error",
+      title: "TAN Already Exists",
+      text: "This TAN number is already registered with another agency.",
+    });
+    return false;
+  }
+
+  // ----- REGISTRATION CHECK -----
+  const regQuery = query(
+    agenciesRef,
+    where("registrationNumber", "==", formData.registrationNumber)
+  );
+  const regSnap = await getDocs(regQuery);
+
+  if (!regSnap.empty) {
+    Swal.fire({
+      icon: "error",
+      title: "Registration Number Exists",
+      text: "This Registration Number is already used by another agency.",
+    });
+    return false;
+  }
+
+  // ----- BANK ACCOUNT CHECK -----
+  const accQuery = query(
+    agenciesRef,
+    where("bankDetails.bankAccountNumber", "==", formData.bankAccountNumber)
+  );
+  const accSnap = await getDocs(accQuery);
+
+  if (!accSnap.empty) {
+    Swal.fire({
+      icon: "error",
+      title: "Bank Account Already Used",
+      text: "This bank account is already linked with another agency.",
+    });
+    return false;
+  }
+
+  // ----- IFSC CHECK -----
+  const ifscQuery = query(
+    agenciesRef,
+    where("bankDetails.ifsc", "==", formData.ifsc.toUpperCase())
+  );
+  const ifscSnap = await getDocs(ifscQuery);
+
+  if (!ifscSnap.empty) {
+    Swal.fire({
+      icon: "error",
+      title: "IFSC Already Used",
+      text: "This IFSC code is already registered with another agency.",
+    });
+    return false;
+  }
+
+  return true;
+};
+
+const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
   const res = await fetch("http://localhost:5000/verify-kyc", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -23,9 +157,13 @@ export default function SignupAgency({ onBack }) {
     }),
   });
 
-  const data = await res.json();
-  return data.verified ? "AUTO_VERIFIED" : "MANUAL_REVIEW";
+  if (!res.ok) {
+    throw new Error("Backend KYC failed");
+  }
+
+  return await res.json(); //  full kycResult
 };
+
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -42,8 +180,7 @@ export default function SignupAgency({ onBack }) {
     state: "",
     pinCode: "",
     kycUploaded: {
-  "Aadhar Card": "",
-  "PAN Card": "",
+  "Aadhar Card": null
 },
 
 
@@ -52,15 +189,63 @@ export default function SignupAgency({ onBack }) {
     ifsc: "",
     accountHolderName: "",
   });
+  //  Password mismatch (live)
+const passwordMismatch =
+  formData.confirmPassword.length > 0 &&
+  formData.password !== formData.confirmPassword;
+  // TAN validation
+const tanInvalid =
+  formData.tanNumber.length > 0 &&
+  !TAN_REGEX.test(formData.tanNumber);
 
+// Registration number validation
+const registrationInvalid =
+  formData.registrationNumber.length > 0 &&
+  !REGISTRATION_REGEX.test(formData.registrationNumber);
+//ifsc code validation
+  const ifscInvalid =
+  formData.ifsc.length > 0 &&
+  !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(formData.ifsc);
+// bank account validation
+const bankAccountInvalid =
+  formData.bankAccountNumber.length > 0 &&
+  !/^\d{9,18}$/.test(formData.bankAccountNumber);
+
+
+//  Step 1 completeness check
+const isStep1Complete =
+  formData.fullName.trim() &&
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email) &&
+  formData.phone.length === 10 &&
+  formData.password.length >= 6 &&
+  !passwordMismatch &&
+  formData.agencyName.trim() &&
+  formData.perKmRate &&
+  Number(formData.perKmRate) > 0 &&
+
+  REGISTRATION_REGEX.test(formData.registrationNumber) &&
+  TAN_REGEX.test(formData.tanNumber) &&
+  formData.address.trim() &&
+  formData.city.trim() &&
+  formData.state.trim() &&
+  formData.pinCode.length === 6 &&
+  !Object.values(alphaErrors).some(Boolean);
   const handleChange = (field, value) => {
+   const alphaOnlyFields = ["fullName", "city", "state", "agencyName"];
+
+  if (alphaOnlyFields.includes(field)) {
+    const isValid = ONLY_ALPHABETS_REGEX.test(value);
+    setAlphaErrors((prev) => ({ ...prev, [field]: !isValid }));
+  } 
   if (field === "phone") value = value.replace(/\D/g, "").slice(0, 10);
   if (field === "pinCode") value = value.replace(/\D/g, "").slice(0, 6);
-  if (field === "registrationNumber" || field === "tanNumber")
-    value = value.toUpperCase();
-  if (field === "ifsc")
-    value = value.toUpperCase(); // ⭐ ADD THIS
+  if (field === "registrationNumber" )
+   value = value.replace(/\D/g, "").slice(0, 10);
+  if (field === "tanNumber")
+    value = value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 10);
+  if (field === "ifsc") value = value.toUpperCase();
 
+  if (field === "email") value = value.trim();
   setFormData((prev) => ({ ...prev, [field]: value }));
 };
 
@@ -68,7 +253,6 @@ export default function SignupAgency({ onBack }) {
 
  const kycOptions = [
   { name: "Aadhar Card", desc: "Owner Aadhaar (person filling the form)" },
-  { name: "PAN Card", desc: "Owner PAN Card" },
 ];
 
   /* ---------------- CLOUDINARY UPLOAD ---------------- */
@@ -107,7 +291,7 @@ export default function SignupAgency({ onBack }) {
         ...prev,
         kycUploaded: {
           ...prev.kycUploaded,
-          [docName]: imageUrl, // ✅ URL saved
+          [docName]: imageUrl, //  URL saved
         },
       }));
 
@@ -172,102 +356,150 @@ export default function SignupAgency({ onBack }) {
         Swal.fire({ icon: "error", title: "Invalid PIN Code", text: "PIN code must be 6 digits!" });
         return;
       }
+      if (!REGISTRATION_REGEX.test(formData.registrationNumber)) {
+  Swal.fire({
+    icon: "error",
+    title: "Invalid Registration Number",
+    text: "Registration number must be 6 to 10 digits",
+  });
+  return;
+}
 
-      setStep(2);
-      return;
+if (!TAN_REGEX.test(formData.tanNumber)) {
+  Swal.fire({
+    icon: "error",
+    title: "Invalid TAN Number",
+    text: "TAN format should be like ABCD12345E",
+  });
+  return;
+}
+
+// DUPLICATE CHECK BEFORE NEXT STEP
+const isUnique = await checkDuplicateAgency();
+if (!isUnique) return;
+
+setStep(2);
+return;
     }
     
 
     // ---------------- STEP 2 VALIDATION ----------------
-    if (step === 2) {
-      // 🔍 1️⃣ Uploaded document nikalo (Aadhaar ya PAN)
-      if (!isKycUploaded) {
-        Swal.fire({
-          icon: "error",
-          title: "KYC Missing",
-          text: "Please upload at least one KYC document!",
-        });
-        return;
-      }
-
-      if (!isBankFilled) {
-        Swal.fire({
-          icon: "error",
-          title: "Invalid Bank Details",
-          text: "Please fill all valid bank details!",
-        });
-        return;
-      }
-      const uploadedEntry = Object.entries(formData.kycUploaded)
+   if (step === 2) {
+    // 🔹 1. Get uploaded KYC URL
+const uploadedEntry = Object.entries(formData.kycUploaded)
   .find(([_, url]) => url);
 
 if (!uploadedEntry) {
-  Swal.fire("Error", "Please upload Aadhaar or PAN", "error");
+  Swal.fire({
+    icon: "error",
+    title: "Upload KYC Document",
+    text: "Please upload Aadhaar card!",
+  });
   return;
 }
 
 const [docType, imageUrl] = uploadedEntry;
 
-// 🔍 2️⃣ OCR verification call
-const kycStatus = await verifyKycWithBackend(
-  imageUrl,
-  formData.fullName,
-  docType
-);
+// 🔹 2. Bank validation
+if (!isBankFilled) {
+  Swal.fire({
+    icon: "error",
+    title: "Invalid Bank Details",
+    text: "Please fill all valid bank details!",
+  });
+  return;
+}
 
-      try {
-        setLoading(true);
+try {
+  setLoading(true);
 
-        const userCred = await createUserWithEmailAndPassword(
-          auth,
-          formData.email,
-          formData.password
-        );
+  // 🔹 3. Backend OCR verification (URL bhejo)
+  const kycResult = await verifyKycWithBackend(
+    imageUrl,
+    formData.fullName,
+    docType
+  );
 
-        const uid = userCred.user.uid;
+  if (!kycResult || !kycResult.status) {
+    throw new Error("KYC verification failed");
+  }
 
-        const {
-  password,
-  confirmPassword,
-  ...safeData
-} = formData;
+  // 🔹 4. Firebase Auth
+  const userCred = await createUserWithEmailAndPassword(
+    auth,
+    formData.email,
+    formData.password
+  );
 
-await setDoc(doc(db, "agencies", uid), {
-  ...safeData,
-  perKmRate: Number(formData.perKmRate), // ⭐ ensure number
-  role: "agency",
-  kycStatus, 
-  createdAt: new Date(),
-});
+  const uid = userCred.user.uid;
 
+  // 🔹 5. Firestore save
+  await setDoc(doc(db, "agencies", uid), {
+    fullName: formData.fullName,
+    email: formData.email,
+    phone: formData.phone,
+    agencyName: formData.agencyName,
+    perKmRate: Number(formData.perKmRate),
 
+    address: formData.address,
+    city: formData.city,
+    state: formData.state,
+    pinCode: formData.pinCode,
+    registrationNumber: formData.registrationNumber,
+    tanNumber: formData.tanNumber,
+    bankDetails: {
+      bankAccountNumber: formData.bankAccountNumber,
+      bankName: formData.bankName,
+      ifsc: formData.ifsc,
+      accountHolderName: formData.accountHolderName,
+    },
 
-        Swal.fire({
-  icon: "success",
-  title: "Registration Successful!",
-  text: "Your agency account has been created.",
-  confirmButtonText: "Go to Dashboard",
-}).then(() => {
-  navigate("/agency-dashboard");
+    kyc: {
+  status: kycResult.status,
 
-});
+  extracted: {
+    nameFromDoc: kycResult.extracted?.nameFromDoc || null,
+    dob: kycResult.extracted?.dob || null,
+    gender: kycResult.extracted?.gender || null,
+    maskedAadhaar: kycResult.extracted?.maskedAadhaar || null,
+    ageBand: kycResult.extracted?.ageBand || null,
+  },
 
-setLoading(false);
+  note: kycResult.note || null,
+  review: {
+    reviewedBy: null,
+    reviewedAt: null,
+    reason: null
+  }
+},
+    kycUrl: imageUrl,
+    averageRating: 0,
+    ratingCount: 0,
+    role: "agency",
+    createdAt: new Date(),
+  });
 
-      } catch (error) {
-        console.error("❌ Signup Error:", error);
+  Swal.fire({
+    icon: "success",
+    title: "Registration Successful!",
+    text:
+      kycResult.status === "AUTO_VERIFIED"
+        ? "KYC Auto Verified Successfully"
+        : "KYC sent for Manual Review",
+  }).then(() => navigate("/agency-dashboard"));
 
-        Swal.fire({
-          icon: "error",
-          title: "Signup Failed",
-          text: error.message,
-        });
-
-        setLoading(false);
-      }
-    }
-  };
-
+} catch (err) {
+  console.error(err);
+  Swal.fire({
+    icon: "error",
+    title: "Signup Failed",
+    text: err.message,
+  });
+} finally {
+  setLoading(false);
+}
+}
+}
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
       <div className="w-full max-w-5xl bg-white rounded-2xl shadow-xl border p-8 relative">
@@ -358,38 +590,107 @@ setLoading(false);
     }`}
   >
     {row.map((f) => (
-      <div key={f.name}>
-        <label className="block font-medium mb-1">{f.label}</label>
+        <div key={f.name}>
+          <label className="block font-medium mb-1">{f.label}</label>
 
-        {f.name === "address" ? (
-          <textarea
-            rows={3}
-            className="w-full p-3 rounded-lg border border-gray-300"
-            placeholder={f.placeholder}
-            value={formData[f.name]}
-            onChange={(e) => handleChange(f.name, e.target.value)}
-          />
-        ) : (
-          <input
-            type={f.type || "text"}
-            placeholder={f.placeholder}
-            className="w-full p-3 rounded-lg border border-gray-300"
-            value={formData[f.name]}
-            onChange={(e) => handleChange(f.name, e.target.value)}
-          />
-        )}
+          {f.name === "address" ? (
+            <textarea
+              rows={3}
+              className="w-full p-3 rounded-lg border border-gray-300"
+              placeholder={f.placeholder}
+              value={formData[f.name]}
+              onChange={(e) => handleChange(f.name, e.target.value)}
+            />
+              
+          ) : f.name === "state" ? (
+  <div className="relative">
+    <input
+      type="text"
+      placeholder="Select your state"
+      className="w-full p-3 rounded-lg border border-gray-300"
+      value={formData.state}
+      onChange={(e) => {
+        handleChange("state", e.target.value);
+        setShowStateDropdown(true);
+      }}
+      onBlur={() => setTimeout(() => setShowStateDropdown(false), 150)}
+    />
+
+    {showStateDropdown && (
+      <div className="absolute z-10 w-full bg-white border rounded-md shadow-md max-h-48 overflow-y-auto">
+        {STATES.filter((s) =>
+          s.toLowerCase().includes(formData.state.toLowerCase())
+        ).map((state) => (
+          <div
+            key={state}
+            className="px-3 py-2 cursor-pointer hover:bg-gray-100"
+            onMouseDown={() => {
+              handleChange("state", state);
+              setShowStateDropdown(false);
+            }}
+          >
+            {state}
+          </div>
+        ))}
       </div>
-    ))}
+    )}
+  </div>
+) : (
+  <div>
+    <input
+      type={f.type || "text"}
+      placeholder={f.placeholder}
+      className={`w-full p-3 rounded-lg border ${
+        ((f.name === "password" || f.name === "confirmPassword") &&
+          passwordMismatch) ||
+        (f.name === "tanNumber" && tanInvalid) ||
+        (f.name === "registrationNumber" && registrationInvalid)
+          ? "border-red-500"
+          : "border-gray-300"
+      }`}
+      value={formData[f.name]}
+      onChange={(e) => handleChange(f.name, e.target.value)}
+    />
+    {/* 🔤 Alphabets only warning */}
+    {alphaErrors[f.name] && (
+      <p className="text-sm text-red-500 mt-1">
+        * Only alphabets are allowed
+      </p>
+    )}
+    {f.name === "tanNumber" && tanInvalid && (
+      <p className="text-sm text-red-500 mt-1">
+        * Format is incorrect. It should be eg: ABCD12345E
+      </p>
+    )}
+
+    {f.name === "registrationNumber" && registrationInvalid && (
+      <p className="text-sm text-red-500 mt-1">
+        * Registration number must be 6 to 10 digits
+      </p>
+    )}
+  </div>
+)}
   </div>
 ))}
-
-             
+  </div>
+))}
               <button
                 type="submit"
-                className="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-lg shadow-md"
+                disabled={!isStep1Complete}
+                className={`w-full py-3 font-semibold rounded-lg shadow-md text-white ${
+                  isStep1Complete
+                    ? "bg-gradient-to-r from-blue-600 to-purple-600"
+                    : "bg-gray-400 cursor-not-allowed"
+                }`}
               >
-                Continue to KYC & Bank Details
+                Continue to eKYC & Bank Details
               </button>
+              {!isStep1Complete && (
+            <p className="text-sm text-red-500 mt-2 text-center">
+              * Please fill all required details to continue
+            </p>
+          )}
+
             </form>
           </>
         )}
@@ -398,14 +699,12 @@ setLoading(false);
         {step === 2 && (
           <form onSubmit={handleSubmit}>
             <h2 className="text-3xl font-bold text-gray-900 text-center mb-4">
-              KYC & Bank Details
+              e-KYC & Bank Details
             </h2>
 
             {/* KYC UPLOAD */}
             <div className="mb-6">
               <h3 className="text-lg font-semibold mb-2">Upload e-KYC Document</h3>
-              <p className="text-gray-500 mb-2">Upload any ONE:</p>
-
               {kycOptions.map((doc) => {
                 const id = slugId(doc.name);
                 const uploaded = !!formData.kycUploaded[doc.name];
@@ -447,24 +746,79 @@ setLoading(false);
             {/* BANK DETAILS */}
             <h3 className="text-lg font-semibold mb-2">🏦 Bank Details</h3>
 
-            {[
-              { name: "bankAccountNumber", label: "Bank Account Number", placeholder: "Enter bank account number" },
-              { name: "bankName", label: "Bank Name", placeholder: "Enter bank name" },
-              { name: "ifsc", label: "IFSC Code", placeholder: "Enter IFSC code" },
-              { name: "accountHolderName", label: "Account Holder Name", placeholder: "Enter account holder's name" },
-            ].map((f) => (
-              <div key={f.name} className="mb-2">
-                <label className="block font-medium mb-1">{f.label}</label>
-                <input
-                  type="text"
-                  placeholder={f.placeholder}
-                  className="w-full p-3 rounded-lg border border-gray-300"
-                  value={formData[f.name]}
-                  onChange={(e) => handleChange(f.name, e.target.value)}
-                  required
-                />
-              </div>
+          {[
+  { name: "bankAccountNumber", label: "Bank Account Number", placeholder: "Enter bank account number" },
+  { name: "bankName", label: "Bank Name", placeholder: "Enter bank name" },
+  { name: "ifsc", label: "IFSC Code", placeholder: "Enter IFSC code" },
+  { name: "accountHolderName", label: "Account Holder Name", placeholder: "Enter account holder's name" },
+].map((f) => (
+  <div key={f.name} className="mb-2 relative">
+    <label className="block font-medium mb-1">{f.label}</label>
+
+    {f.name === "bankName" ? (
+      /* 🔽 Bank dropdown (already correct) */
+      <div className="relative">
+        <input
+          type="text"
+          className="w-full p-3 rounded-lg border border-gray-300"
+          value={formData.bankName}
+          onChange={(e) => {
+            handleChange("bankName", e.target.value);
+            setShowBankDropdown(true);
+          }}
+          onBlur={() => setTimeout(() => setShowBankDropdown(false), 150)}
+        />
+
+        {showBankDropdown && (
+          <div className="absolute z-10 w-full bg-white border rounded-md shadow-md max-h-48 overflow-y-auto">
+            {BANKS.filter((bank) =>
+              bank.toLowerCase().includes(formData.bankName.toLowerCase())
+            ).map((bank) => (
+              <div
+              key={bank}
+              className="px-3 py-2 cursor-pointer hover:bg-gray-100"
+              onMouseDown={() => {
+                handleChange("bankName", bank);
+                setShowBankDropdown(false);
+              }}
+            >
+              {bank}
+            </div>
+
             ))}
+          </div>
+        )}
+      </div>
+    ) : (
+      <>
+        <input
+          type="text"
+          className={`w-full p-3 rounded-lg border ${
+            (f.name === "bankAccountNumber" && bankAccountInvalid) ||
+            (f.name === "ifsc" && ifscInvalid)
+              ? "border-red-500"
+              : "border-gray-300"
+          }`}
+          value={formData[f.name]}
+          onChange={(e) => handleChange(f.name, e.target.value)}
+          required
+        />
+
+        {f.name === "bankAccountNumber" && bankAccountInvalid && (
+          <p className="text-sm text-red-500 mt-1">
+            * Invalid bank account number
+          </p>
+        )}
+
+        {f.name === "ifsc" && ifscInvalid && (
+          <p className="text-sm text-red-500 mt-1">
+            * Invalid IFSC code
+          </p>
+        )}
+      </>
+    )}
+  </div>
+))}
 
             {/* BUTTONS */}
             <div className="flex justify-between mt-6">

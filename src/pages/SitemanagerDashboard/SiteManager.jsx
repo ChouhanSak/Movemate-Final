@@ -1,5 +1,3 @@
-// src/pages/agency-dashboard/AgencyDashboard.jsx
-
 import React, { useMemo, useState, useEffect } from "react";
 import { 
   Home, Users, Building, Box, AlertTriangle, DollarSign, LogOut, X as XIcon, Menu, Bell as BellIcon, 
@@ -8,12 +6,17 @@ import {
 
 import smallTruck from "../../assets/smalltruck.png";
 import ManageCustomer from "./ManageCustomer";
-import ManageAgency from "./ManageAgency"; // ✅ import ManageAgency
+import ManageAgency from "./ManageAgency"; // import ManageAgency
 import AllBookings from "./AllBookings";
 import PaymentManagement from "./paymentmanagement";
 import SiteManagerDispute from "./SiteManagerDispute";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "../../firebase";
+import { auth } from "../../Firebase";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "../../Firebase";
+import { signOut } from "firebase/auth";
+import { useNavigate } from "react-router-dom";
+import Footer from "../../components/Footer"; 
 
 /* ---------- StatCard Component ---------- */
 
@@ -35,18 +38,23 @@ const BookingTrends = ({ width = 520, height = 260, data = [45, 52, 49, 62, 72, 
   const padding = 40;
   const w = width;
   const h = height;
-  const maxVal = Math.max(...data) * 1.2;
-  const stepX = (w - padding * 2) / (data.length - 1);
+  const safeData = data.length ? data : [0, 0, 0, 0, 0, 0];
+  const maxVal = Math.max(...safeData) * 1.2 || 10;
 
-  const points = data
-    .map((d, i) => {
-      const x = padding + i * stepX;
-      const y = padding + (1 - d / maxVal) * (h - padding * 2);
-      return `${x},${y}`;
-    })
-    .join(" ");
+ const stepX = (w - padding * 2) / (safeData.length - 1);
 
-  const circles = data.map((d, i) => {
+
+  const points = safeData
+  .map((d, i) => {
+    const x = padding + i * stepX;
+    const y = padding + (1 - d / maxVal) * (h - padding * 2);
+    return `${x},${y}`;
+  })
+  .join(" ");
+
+
+ const circles = safeData.map((d, i) => {
+
     const x = padding + i * stepX;
     const y = padding + (1 - d / maxVal) * (h - padding * 2);
     return <circle key={i} cx={x} cy={y} r={4.5} fill="#2b7bf6" stroke="#fff" strokeWidth="1" />;
@@ -69,7 +77,8 @@ const BookingTrends = ({ width = 520, height = 260, data = [45, 52, 49, 62, 72, 
             </g>
           );
         })}
-        {["Jan", "Feb", "Mar", "Apr", "May", "Jun"].map((lab, i) => {
+        {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((lab, i) => {
+
           const x = padding + i * stepX;
           return (
             <text key={i} x={x} y={h - padding + 15} fontSize="11" fill="#7b8794" textAnchor="middle">
@@ -134,7 +143,9 @@ export default function SiteManager() {
   const [activePage, setActivePage] = useState("overview");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
-   const [userEmail, setUserEmail] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const navigate = useNavigate();
+
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -144,19 +155,140 @@ export default function SiteManager() {
     });
     return () => unsub();
   }, []);
-  const stats = useMemo(
-    () => ({
-      pendingKYC: 3,
-      activeBookings: 1,
-      disputes: 1,
-      pendingPayments: 3,
-      totalHolding: 50000,
-      releasedToday: 15000,
-      verifiedUsers: 1200,
-      totalBookings: 420,
-    }),
-    []
+
+  const [stats, setStats] = useState({
+  pendingKYC: 0,
+  activeBookings: 0,
+  disputes: 0,
+  pendingPayments: 0,
+  totalHolding: 0,
+  releasedToday: 0,
+  releasedCount: 0, 
+  verifiedUsers: 0,
+  totalBookings: 0,
+});
+const [monthlyBookings, setMonthlyBookings] = useState([]);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "bookings"), (snap) => {
+    const months = Array(12).fill(0);
+
+
+    snap.forEach(doc => {
+      const data = doc.data();
+      if (!data.createdAt) return;
+
+      const date = data.createdAt.toDate();
+      const monthIndex = date.getMonth(); // 0 = Jan
+
+     if (monthIndex >= 0 && monthIndex < 12) {
+
+        months[monthIndex]++;
+      }
+    });
+
+    setMonthlyBookings(months);
+  });
+
+  return () => unsub();
+}, []);
+
+useEffect(() => {
+  let agenciesCount = 0;
+
+  const unsubAgencies = onSnapshot(
+    collection(db, "agencies"),
+    (agencySnap) => {
+      agenciesCount = agencySnap.size;
+    }
   );
+
+  const unsubCustomers = onSnapshot(
+    collection(db, "customers"),
+    (customerSnap) => {
+      const customersCount = customerSnap.size;
+
+      setStats(prev => ({
+        ...prev,
+        verifiedUsers: customersCount + agenciesCount
+      }));
+    }
+  );
+
+  return () => {
+    unsubCustomers();
+    unsubAgencies();
+  };
+}, []);
+useEffect(() => {
+  let customersPending = 0;
+  let agenciesPending = 0;
+
+  const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
+    customersPending = 0;
+
+    snap.forEach(doc => {
+      const status = (doc.data()?.kyc?.status || "").toUpperCase();
+      if (status === "MANUAL_REVIEW") customersPending++;
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingKYC: customersPending + agenciesPending
+    }));
+  });
+
+  const unsubAgencies = onSnapshot(collection(db, "agencies"), (snap) => {
+    agenciesPending = 0;
+
+    snap.forEach(doc => {
+      const status = (doc.data()?.kyc?.status || "").toUpperCase();
+      if (status === "MANUAL_REVIEW") agenciesPending++;
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingKYC: customersPending + agenciesPending
+    }));
+  });
+
+  return () => {
+    unsubCustomers();
+    unsubAgencies();
+  };
+}, []);
+
+
+useEffect(() => {
+  const q = query(
+    collection(db, "bookings"),
+    where("paidAt", "!=", null) // SAME AS AllBookings
+  );
+
+  const unsub = onSnapshot(q, (snapshot) => {
+    let active = 0;
+
+    snapshot.forEach(doc => {
+      const status = (doc.data().status || "").toUpperCase();
+
+      if (
+        status === "BOOKING_PLACED" ||
+        status === "IN_TRANSIT"
+        ) {
+             active++;
+          }
+
+    });
+
+    setStats(prev => ({
+      ...prev,
+      totalBookings: snapshot.size, //  REAL TOTAL
+      activeBookings: active
+    }));
+  });
+
+  return () => unsub();
+}, []);
+
 
   return (
     <div className="w-full min-h-screen flex relative bg-gray-100">
@@ -236,10 +368,14 @@ export default function SiteManager() {
 
     <div
       className="flex items-center gap-3 cursor-pointer hover:text-red-600"
-      onClick={() => {
-        const confirmLogout = window.confirm("Are you sure you want to logout?");
-        if (confirmLogout) window.location.href = "/login";
-      }}
+      onClick={async () => {
+  const confirmLogout = window.confirm("Are you sure you want to logout?");
+  if (!confirmLogout) return;
+
+  await signOut(auth);
+  navigate("/login");
+}}
+
     >
       <LogOut className="w-5 h-5" /> Logout
     </div>
@@ -305,7 +441,12 @@ export default function SiteManager() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 ">
-              <BookingTrends width={640} height={320} />
+             <BookingTrends
+               width={640}
+               height={320}
+               data={monthlyBookings}
+            />
+
               <QuickInsights />
             </div>
 
@@ -334,10 +475,11 @@ export default function SiteManager() {
                       <p className="text-sm text-green-600">Released Today</p>
                       <p className="text-2xl font-semibold text-green-600">{stats.releasedToday}</p>
                     </div>
-                    <div className="text-right">
+                   <div className="text-right">
                       <p className="text-xs text-green-400">Transactions</p>
-                      <p className="text-sm">1</p>
-                    </div>
+                      <p className="text-sm">{stats.releasedCount}</p>
+                   </div>
+
                   </div>
                 </CardContent>
               </Card>
@@ -371,6 +513,7 @@ export default function SiteManager() {
             </div>
           </>
         )}
+       
 
         {/* TODO: Add other pages here as components */}
         {activePage === "manageCustomer" && <ManageCustomer />}
@@ -378,8 +521,12 @@ export default function SiteManager() {
         {activePage === "allBookings" && <AllBookings />}
         {activePage === "disputes" && <SiteManagerDispute />}
         {activePage === "paymentManagement" && <PaymentManagement />}
-
+         {/* ----------------- FOOTER ----------------- */}
+                <div className="mt-12">
+  <Footer />
+</div>
       </main>
+      
     </div>
   );
 }

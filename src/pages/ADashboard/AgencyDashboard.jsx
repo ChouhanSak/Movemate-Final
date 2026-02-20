@@ -10,6 +10,7 @@ import {
   Truck,
   CheckCircle,
   LogOut,
+  Settings
 } from "lucide-react";
 import { Phone, Package, Weight, MapPin,
   Eye,
@@ -29,8 +30,8 @@ import Completed from "./Completed";
 import Footer from "../../components/Footer"; 
 import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
-import { auth, db } from "../../firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { auth, db } from "../../Firebase";
+import { onAuthStateChanged,signOut } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { useEffect, useRef } from "react";
 import BookingDetails from "./BookingDetails";
@@ -38,6 +39,10 @@ import AssignBookingModal from "./AssignBookingModal";
 import { serverTimestamp } from "firebase/firestore";
 import { orderBy, limit } from "firebase/firestore";
 import { calculatePrice } from "../../utils/priceUtils";
+import { deleteDoc, Timestamp } from "firebase/firestore";
+import { addDoc } from "firebase/firestore";
+import BookingRequests from "./BookingRequests";
+import AgencySettings from "./AgencySettings";
 function timeAgo(timestamp) {
   if (!timestamp) return "";
 
@@ -69,10 +74,10 @@ function isPaymentExpired(priceSetAt) {
   const priceTime = priceSetAt.toDate().getTime();
   return now - priceTime > expiryTime;
 }
-
 export default function AgencyDashboard() {
-  const [bookingRequests, setBookingRequests] = useState([]);
-  const [agency, setAgency] = useState(null);
+const [activityLoaded, setActivityLoaded] = useState(false);
+const [bookingRequests, setBookingRequests] = useState([]);
+const [agency, setAgency] = useState(null);
 const [loadingAgency, setLoadingAgency] = useState(true);
 const [showDetails, setShowDetails] = useState(false);
 const [selectedBooking, setSelectedBooking] = useState(null);
@@ -81,98 +86,214 @@ const [assignBooking, setAssignBooking] = useState(null);
 const [notifications, setNotifications] = useState([]);
 const [showNotifications, setShowNotifications] = useState(false);
 const notifRef = useRef(null);
-const agencyId = auth.currentUser?.uid;
+const navigate = useNavigate();
+const [authReady, setAuthReady] = useState(false);
+const [currentUser, setCurrentUser] = useState(null);
 const [kycStatus, setKycStatus] = useState(null);
+const [stats, setStats] = useState({
+completed: 0,
+pending: 0,
+active: 0,
+fleet: 0,
+availableFleet: 0,
+});
+const isKycBlocked = kycStatus === "MANUAL_REVIEW" ;
+const [monthlyStats, setMonthlyStats] = useState({
+  deliveries: 0,
+  earnings: 0,
+  successRate: 0
+});
 useEffect(() => {
-  if (!auth.currentUser) return;
-
-  const unsub = onSnapshot(doc(db, "agencies", auth.currentUser.uid), (snap) => {
-    if (snap.exists()) {
-      const data = snap.data();
-      setKycStatus(data.kycStatus);
-    }
+  const unsub = onAuthStateChanged(auth, (user) => {
+    setCurrentUser(user);
+    setAuthReady(true);
   });
-
   return () => unsub();
 }, []);
 
+useEffect(() => {
+  if (!currentUser) return;
+  const unsub = onSnapshot(
+    doc(db, "agencies", currentUser.uid),
+    (snap) => {
+      if (snap.exists()) {
+        setKycStatus(snap.data().kyc?.status);
+      }
+    }
+  );
+  return () => unsub();
+}, [currentUser]);
 
  // must match Firestore field
 const [recentActivity, setRecentActivity] = useState([]);
+const rejectedShown = useRef(false);
+useEffect(() => {
+  if (!currentUser) return;
+  if (kycStatus !== "REJECTED") return;
+  if (rejectedShown.current) return;
+
+  rejectedShown.current = true;
+
+  const handleRejected = async () => {
+    try {
+      const docRef = doc(db, "agencies", currentUser.uid);
+      const docSnap = await getDoc(docRef);
+
+      let reason = "Your account verification failed. Please sign up again.";
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        reason = data?.kyc?.review?.reason || data?.kyc?.reason || reason;
+      }
+
+      // 🔹 Show alert first
+      await Swal.fire({
+        icon: "error",
+        title: "Verification Failed",
+        text: reason,
+        confirmButtonColor: "#d33",
+        allowOutsideClick: false,
+      });
+
+      // 🔹 Delete agency doc BEFORE signing out
+      try {
+        await deleteDoc(docRef);
+        console.log("Agency document deleted successfully");
+      } catch (err) {
+        console.warn("Could not delete agency doc:", err);
+      }
+
+      // 🔹 Then sign out
+      await signOut(auth);
+
+      // 🔹 Redirect to signup page
+      navigate("/signup/agency", { replace: true });
+    } catch (err) {
+      console.error("Error handling rejected KYC:", err);
+      Swal.fire("Error", "Something went wrong. Please try again.", "error");
+    }
+  };
+  handleRejected();
+}, [kycStatus, currentUser, navigate]);
+
+const blockedShown = useRef(false);
 
 useEffect(() => {
-  if (!auth.currentUser) return;
+  if (!currentUser) return;
+  if (blockedShown.current) return;
 
-  // 🔹 Real-time notifications listener
-  const q = query(
-    collection(db, "notifications"),
-    where("agencyId", "==", auth.currentUser.uid),
+  const checkBlocked = async () => {
+    const docRef = doc(db, "agencies", currentUser.uid);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const status = data.status || "Active";
+
+      if (status === "Blocked") {
+        blockedShown.current = true;
+
+        await Swal.fire({
+          icon: "error",
+          title: "Account Blocked",
+          text: "Your account has been blocked. Contact support for more info.",
+          allowOutsideClick: false,
+        });
+
+        await signOut(auth);
+        navigate("/select-user");
+      }
+    }
+  };
+
+  checkBlocked();
+}, [navigate]);useEffect(() => {
+  if (!currentUser) return;
+
+  const unsub = onSnapshot(
+    query(collection(db, "bookings"), where("agencyId", "==", currentUser.uid)),
+    (snap) => {
+      if (snap.empty) return;
+
+      let request = null;
+      let placed = null;
+      let delivered = null;
+
+      snap.forEach(doc => {
+        const b = doc.data();
+        const id = doc.id;
+
+        if (b.createdAt) {
+          if (!request || b.createdAt.toDate() > request.time.toDate()) {
+            request = { label: "New booking request", ref: id, time: b.createdAt, type: "REQUEST" };
+          }
+        }
+        if (b.assignedAt) {
+          if (!placed || b.assignedAt.toDate() > placed.time.toDate()) {
+            placed = { label: "Booking placed", ref: id, time: b.assignedAt, type: "PLACED" };
+          }
+        }
+
+        if (b.completedAt) {
+          if (!delivered || b.completedAt.toDate() > delivered.time.toDate()) {
+            delivered = { label: "Status updated to delivered", ref: id, time: b.completedAt, type: "DELIVERED" };
+          }
+        }
+      });
+
+      const activities = [];
+      if (request) activities.push(request);
+      if (placed) activities.push(placed);
+      if (delivered) activities.push(delivered);
+
+      activities.sort((a, b) => b.time.toDate() - a.time.toDate());
+      setRecentActivity(activities);
+    }
   );
-const unsubscribe = onSnapshot(q, (snapshot) => {
-  const notifList = snapshot.docs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-  }));
-  console.log("Notifications:", notifList);
-  setNotifications(notifList);
-});
+
+  return () => unsub();
+}, [currentUser]);
 
 
-  return () => unsubscribe();
-}, []);
 useEffect(() => {
-  if (!auth.currentUser) return;
+  if (!currentUser) return;
 
   const q = query(
     collection(db, "bookings"),
-    where("agencyId", "==", auth.currentUser.uid),
-    orderBy("updatedAt", "desc"),
-    limit(5)
+    where("agencyId", "==", currentUser.uid)
   );
 
   const unsubscribe = onSnapshot(q, (snap) => {
-    const activities = [];
+    const now = new Date();
+    const month = now.getMonth();
+    const year = now.getFullYear();
 
-    snap.docs.forEach((docSnap) => {
-      const b = docSnap.data();
-      const id = docSnap.id;
+    let deliveries = 0;
+    let earnings = 0;
+    let total = 0;
+    let success = 0;
 
-      if (b.completedAt) {
-        activities.push({
-          type: "DELIVERED",
-          label: "Status updated to delivered",
-          ref: id,
-          time: b.completedAt,
-        });
-      } else if (b.paymentAt) {
-        activities.push({
-          type: "PAYMENT",
-          label: "Payment received",
-          ref: `₹${b.price}`,
-          time: b.paymentAt,
-        });
-      } else if (b.acceptedAt) {
-        activities.push({
-          type: "ACCEPTED",
-          label: "Booking accepted",
-          ref: id,
-          time: b.acceptedAt,
-        });
-      } else {
-        activities.push({
-          type: "NEW",
-          label: "New request received",
-          ref: id,
-          time: b.createdAt,
-        });
+    snap.docs.forEach(doc => {
+      const b = doc.data();
+      if (!b.createdAt) return;
+
+      const date = b.createdAt.toDate();
+      if (date.getMonth() === month && date.getFullYear() === year) {
+        total++;
+        if (b.status === "COMPLETED") {
+          deliveries++;
+          earnings += b.price || 0;
+          success++;
+        }
       }
     });
 
-    setRecentActivity(activities.slice(0, 4));
+    const successRate = total === 0 ? 0 : Math.round((success / total) * 100);
+    setMonthlyStats({ deliveries, earnings, successRate });
   });
 
   return () => unsubscribe();
-}, []);
+}, [currentUser]);
+
 useEffect(() => {
   const handleClickOutside = (event) => {
     if (notifRef.current && !notifRef.current.contains(event.target)) {
@@ -183,7 +304,7 @@ useEffect(() => {
   return () => document.removeEventListener("mousedown", handleClickOutside);
 }, []);
 
-  const navigate = useNavigate();
+  
   const [open, setOpen] = useState(false);
   const [activePage, setActivePage] = useState("overview"); // overview | booking | fleet | completed
   // const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
@@ -202,10 +323,30 @@ const handleReject = async (bookingId) => {
   if (!result.isConfirmed) return;
 
   try {
-    await updateDoc(doc(db, "bookings", bookingId), {
-      status: "Rejected",
-      rejectedAt: new Date(),
+    const bookingRef = doc(db, "bookings", bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+
+    if (!bookingSnap.exists()) return;
+
+    const booking = bookingSnap.data();
+
+    // 1️⃣ Update booking status
+    await updateDoc(bookingRef, {
+      status: "REJECTED",
+      rejectedAt: serverTimestamp(),
     });
+
+    // 2️⃣ Send notification to customer
+    await addDoc(collection(db, "notifications"), {
+  userId: booking.customerId,     // 👈 only customer will receive
+  message: "❌ Your booking has been rejected by the agency",
+  bookingId,
+  read: false,
+  userType: "customer",
+  createdAt: serverTimestamp(),
+  type: "BOOKING_REJECTED",
+});
+
 
     Swal.fire("Rejected!", "Booking has been rejected", "success");
   } catch (err) {
@@ -213,11 +354,12 @@ const handleReject = async (bookingId) => {
     Swal.fire("Error", "Unable to reject booking", "error");
   }
 };
-
+let unsubscribeStats = null;
+let unsubscribeFleet = null;
 
   useEffect(() => {
   let unsubscribeBookings = null;
-
+  let unsubNotif = null; 
   const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
     if (!user) {
       window.location.href = "/login";
@@ -233,8 +375,46 @@ const handleReject = async (bookingId) => {
         setAgency({
           name: data.agencyName || "Agency",
           email: data.email || user.email || "",
+          averageRating: data.averageRating || 0, // add this
+          ratingCount: data.ratingCount || 0, 
         });
       }
+      // ATTACH NOTIFICATION LISTENER HERE
+const notifQuery = query(
+  collection(db, "notifications"),
+  where("agencyId", "==", user.uid),
+  orderBy("createdAt", "desc")
+);
+
+ unsubNotif = onSnapshot(notifQuery, async (snapshot) => {
+  const now = new Date();
+  const fresh = [];
+  const oldDocs = [];
+
+  snapshot.docs.forEach((docSnap) => {
+    const data = docSnap.data();
+    const createdAt = data.createdAt?.toDate();
+
+    if (!createdAt) return;
+
+    const diffDays = (now - createdAt) / (1000 * 60 * 60 * 24);
+
+    if (diffDays > 5) {
+      oldDocs.push(docSnap.id);          // 🧹 delete from DB
+    } else {
+      fresh.push({ id: docSnap.id, ...data });   // 👁️ show in UI
+    }
+  });
+
+  //  Delete expired notifications from Firestore
+  for (const id of oldDocs) {
+    await deleteDoc(doc(db, "notifications", id));
+  }
+
+  setNotifications(fresh);
+});
+
+
 const q = query(
   collection(db, "bookings"),
   where("agencyId", "==", user.uid),
@@ -247,13 +427,58 @@ const q = query(
   ])
 );
 
-
 unsubscribeBookings = onSnapshot(q, (snap) => {
   const list = snap.docs.map((d) => ({
     id: d.id,
     ...d.data(),
   }));
   setBookingRequests(list);
+});
+const statsQuery = query(
+  collection(db, "bookings"),
+  where("agencyId", "==", user.uid)
+);
+
+ unsubscribeStats = onSnapshot(statsQuery, (snap) => {
+  let completed = 0;
+  let pending = 0;
+  let active = 0;
+
+  snap.docs.forEach(doc => {
+    const b = doc.data();
+
+    if (b.status === "COMPLETED") completed++;
+    else if (
+  [ "pending", "WAITING_FOR_PAYMENT", "PAYMENT_PENDING"].includes(b.status)
+)
+ pending++;
+    else if (["IN_TRANSIT", "BOOKING_PLACED"].includes(b.status)) active++;
+  });
+
+  setStats(s => ({
+    ...s,
+    completed,
+    pending,
+    active
+  }));
+});
+const fleetQuery = query(
+  collection(db, "vehicles"),
+  where("agencyId", "==", user.uid)
+);
+ unsubscribeFleet = onSnapshot(fleetQuery, (snap) => {
+  let available = 0;
+
+  snap.docs.forEach(doc => {
+    const v = doc.data();
+    if (v.status === "Available") available++;
+  });
+
+  setStats(s => ({
+    ...s,
+    fleet: snap.size,
+    availableFleet: available
+  }));
 });
 
 
@@ -265,10 +490,22 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
   });
 
   return () => {
-    unsubscribeAuth();
-    if (unsubscribeBookings) unsubscribeBookings();
-  };
+  unsubscribeAuth();
+  if (unsubscribeBookings) unsubscribeBookings();
+  if (unsubNotif) unsubNotif();
+  if (unsubscribeStats) unsubscribeStats();
+if (unsubscribeFleet) unsubscribeFleet();
+
+};
+
 }, []);
+if (!authReady) {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <p className="text-lg font-semibold">Loading...</p>
+    </div>
+  );
+}
 
   if (loadingAgency) {
   return (
@@ -316,9 +553,19 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
           <div
             className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${activePage === "booking" ? "text-purple-600 font-semibold" : ""}`}
             onClick={() => {
-            setActivePage("booking");
-            setOpen(false);
-          }}
+  if (isKycBlocked) {
+    Swal.fire({
+      icon: "warning",
+      title: "Access Restricted",
+      text: "Your account is under verification. Please wait until admin approval.",
+      confirmButtonColor: "#7c3aed",
+    });
+    return;
+  }
+  setActivePage("booking");
+  setOpen(false);
+}}
+
           >
             <Clock className="w-5 h-5" />
             Booking Requests
@@ -354,15 +601,34 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
           <div
             className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${activePage === "fleet" ? "text-purple-600 font-semibold" : ""}`}
             onClick={() => {
-            setActivePage("fleet");
-            setOpen(false);
-          }}
-
+  if (isKycBlocked) {
+    Swal.fire({
+      icon: "warning",
+      title: "Access Restricted",
+      text: "Vehicle management is locked until KYC verification is complete.",
+      confirmButtonColor: "#7c3aed",
+    });
+    return;
+  }
+  setActivePage("fleet");
+  setOpen(false);
+}}
           >
             <Truck className="w-5 h-5" />
             Manage Vehicle
           </div>
-
+          <div
+          className={`flex items-center gap-3 cursor-pointer hover:text-blue-600 ${
+            activePage === "settings" ? "text-purple-600 font-semibold" : ""
+          }`}
+          onClick={() => {
+            setActivePage("settings");
+            setOpen(false);
+          }}
+        >
+            <Settings className="w-5 h-5" />
+          Settings
+        </div>
           <div
             className="flex items-center gap-3 cursor-pointer hover:text-red-600"
             onClick={() => {
@@ -376,7 +642,6 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
     confirmButtonText: "Yes, Logout",
   }).then((result) => {
     if (result.isConfirmed) {
-      // 🔥 optional: Firebase signout later
       // await signOut(auth);
 
       Swal.fire({
@@ -388,12 +653,11 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
       });
 
       setTimeout(() => {
-        navigate("/select-user"); // ✅ SELECT USER PAGE
+        navigate("/select-user"); // SELECT USER PAGE
       }, 1500);
     }
   });
 }}
-
           >
             <LogOut className="w-5 h-5" />
             Logout
@@ -406,12 +670,6 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
       className="flex-1 pt-24 px-6 transition-all duration-300"
       style={{ marginLeft: open ? "16rem" : "0" }}
       >
-      {kycStatus === "MANUAL_REVIEW" && (
-  <div className="mb-4 p-4 rounded-lg bg-yellow-100 border border-yellow-400 text-yellow-800">
-    ⚠ Your account is under verification.  
-    You cannot accept bookings until verification is complete.
-  </div>
-)}
         {/* ---------------- Top Bar ---------------- */}
 <div
   className="fixed top-0 bg-white shadow-sm px-6 py-3 z-50 transition-all duration-300"
@@ -420,7 +678,7 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
     width: open ? "calc(100% - 16rem)" : "100%",
   }}
 >
-  {/* ✅ SINGLE FLEX ROW */}
+  {/*SINGLE FLEX ROW */}
   <div className="flex items-center justify-between w-full flex-nowrap">
 
     {/* LEFT SIDE */}
@@ -460,9 +718,10 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
 
   {showNotifications && (
     <div
-      ref={notifRef}
-      className="absolute right-0 mt-2 w-72 bg-white shadow-lg rounded-lg z-50 overflow-hidden p-3"
-    >
+  ref={notifRef}
+  className="absolute right-0 mt-2 w-72 max-h-96 bg-white shadow-lg rounded-lg z-50 overflow-y-auto p-3"
+>
+
       {notifications.length === 0 ? (
         <div className="p-4 text-gray-500">No notifications</div>
       ) : (
@@ -481,9 +740,9 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
           >
             🔔 {n.message}
             <div className="text-xs text-gray-400 mt-1">
-              {n.createdAt?.toDate().toLocaleString()}
-            </div>
-          </div>
+  {(n.createdAt?.toDate ? n.createdAt.toDate() : new Date(n.createdAt)).toLocaleString()}
+</div>
+ </div>
         ))
       )}
     </div>
@@ -511,6 +770,12 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
 
   </div>
 </div>
+{kycStatus === "MANUAL_REVIEW" && (
+  <div className="mb-4 p-4 rounded-lg bg-yellow-100 border border-yellow-400 text-yellow-800">
+    ⚠ Your account is under verification.  
+    You cannot accept bookings until verification is complete.
+  </div>
+)}
 
         {/* ---------------- Page Content ---------------- */}
         {activePage === "overview" && (
@@ -529,364 +794,127 @@ unsubscribeBookings = onSnapshot(q, (snap) => {
               <Card className="bg-purple-600 text-white rounded-xl shadow-md hover:-translate-y-1 transition">
                 <CardContent className="p-4">
                   <p className="text-lg">Completed Jobs</p>
-                  <h2 className="text-2xl font-bold mt-1">x</h2>
+                  <h2 className="text-2xl font-bold mt-1">{stats.completed}</h2>
                   <p className="text-sm mt-1">All time deliveries</p>
                 </CardContent>
               </Card>
               <Card className="bg-blue-600 text-white rounded-xl shadow-md hover:-translate-y-1 transition">
                 <CardContent className="p-4">
                   <p className="text-lg">Pending Requests</p>
-                  <h2 className="text-2xl font-bold mt-1">x</h2>
+                  <h2 className="text-2xl font-bold mt-1">{stats.pending}</h2>
                   <p className="text-sm mt-1">Needs your attention</p>
                 </CardContent>
               </Card>
               <Card className="bg-orange-600 text-white rounded-xl shadow-md hover:-translate-y-1 transition">
                 <CardContent className="p-4">
                   <p className="text-lg">Active Deliveries</p>
-                  <h2 className="text-2xl font-bold mt-1">x</h2>
+                  <h2 className="text-2xl font-bold mt-1">{stats.active}</h2>
                   <p className="text-sm mt-1">Currently in transit</p>
                 </CardContent>
               </Card>
               <Card className="bg-green-600 text-white rounded-xl shadow-md hover:-translate-y-1 transition">
                 <CardContent className="p-4">
                   <p className="text-lg">Fleet Vehicles</p>
-                  <h2 className="text-2xl font-bold mt-1">x</h2>
-                  <p className="text-sm mt-1">2 available</p>
+                  <h2 className="text-2xl font-bold mt-1">{stats.fleet}</h2>
+                  <p className="text-sm mt-1">{stats.availableFleet} available</p>
+
                 </CardContent>
               </Card>
             </div>
 
+            
             {/* Recent Activity */}
-            <Card className="mt-10 rounded-2xl shadow-lg bg-white hover:shadow-xl transition cursor-pointer">
-              <CardContent className="p-6">
-                <h2 className="text-xl font-semibold mb-4">Recent Activity</h2>
-                <div className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <span className="w-3 h-3 bg-green-500 rounded-full mt-1" />
-                    <div>
-                      <p className="font-medium">Booking accepted</p>
-                      <p className="text-gray-500 text-sm">REQ004 • 1 hour ago</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <span className="w-3 h-3 bg-blue-500 rounded-full mt-1" />
-                    <div>
-                      <p className="font-medium">Status updated to delivered</p>
-                      <p className="text-gray-500 text-sm">BK003 • 2 hours ago</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <span className="w-3 h-3 bg-orange-500 rounded-full mt-1" />
-                    <div>
-                      <p className="font-medium">New request received</p>
-                      <p className="text-gray-500 text-sm">REQ003 • 5 hours ago</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <span className="w-3 h-3 bg-purple-500 rounded-full mt-1" />
-                    <div>
-                      <p className="font-medium">Payment received</p>
-                      <p className="text-gray-500 text-sm">₹32,000 • 1 day ago</p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+<Card className="mt-10 rounded-2xl shadow-lg bg-white hover:shadow-xl transition cursor-pointer">
+  <CardContent className="p-6">
+    <h2 className="text-xl font-semibold mb-4">Recent Activity</h2>
+
+    <div className="space-y-4">
+      {recentActivity.length === 0 ? (
+        <p className="text-gray-500">No recent activity</p>
+      ) : (
+        recentActivity.map((a, i) => (
+          <div key={i} className="flex items-start gap-3">
+            <span
+              className={`w-3 h-3 rounded-full mt-1 ${
+                a.type === "DELIVERED"
+                  ? "bg-green-500"
+                  : a.type === "REQUEST"
+                  ? "bg-blue-500"
+                  : "bg-orange-500"
+              }`}
+            />
+
+            <div>
+              <p className="font-medium">{a.label}</p>
+
+              <p className="text-gray-500 text-sm">
+                {a.ref} • {timeAgo(a.time)}
+              </p>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  </CardContent>
+</Card>
 
             {/* This Month Section */}
-            <div className="mt-10 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-3xl p-8 hover:shadow-2xl transition cursor-pointer">
+            <div className="mt-10 mb-10 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-3xl p-8 hover:shadow-2xl transition cursor-pointer">
               <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">📈 This Month</h2>
               <div className="grid grid-cols-2 gap-y-4">
                 <p className="text-lg">Deliveries</p>
-                <p className="text-lg text-right">18 trips</p>
+                <p className="text-lg text-right">{monthlyStats.deliveries} trips</p>
                 <p className="text-lg">Earnings</p>
-                <p className="text-lg text-right">₹2,85,000</p>
+                <p className="text-lg text-right">₹{0}</p>
                 <p className="text-lg">Avg. Rating</p>
-                <p className="text-lg text-right">4.8 ⭐</p>
+                <p className="text-lg text-right">{agency?.averageRating?.toFixed(1)} ⭐</p>
                 <p className="text-lg">Success Rate</p>
-                <p className="text-lg text-right">98%</p>
+                <p className="text-lg text-right">{monthlyStats.successRate}%</p>
               </div>
             </div>
           </>
         )}
 
-        {activePage === "booking" && (
-          <div className="w-full h-full bg-white p-6 rounded-2xl shadow-md">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">Booking Requests</h2>
-              <button onClick={() => setActivePage("overview")}>
-                <X className="w-6 h-6 text-gray-700" />
-              </button>
-            </div>
-            <p className="text-gray-500 mb-2">Review and accept new booking requests from customers</p>
-            <div className="space-y-4">
-              
-              {bookingRequests.map((req) =>(
-      
-                <div key={req.id} className="bg-gray-50 p-4 rounded-xl shadow-sm">
-                  <div className="flex items-center justify-between mb-0">
-  {/* LEFT : STATUS */}
-  <span className="flex items-center gap-2 font-semibold text-sm">
-    <span
-      className={
-        req.status === "PAYMENT_CONFIRMED"
-          ? "text-green-600"
-          : req.status === "PAYMENT_PENDING"
-          ? isPaymentExpired(req.priceSetAt)
-            ? "text-red-600"
-            : "text-blue-600"
-          : "text-yellow-600"
-      }
-    >
-      {req.status === "PAYMENT_CONFIRMED"
-        ? "Payment Confirmed"
-        : req.status === "PAYMENT_PENDING"
-        ? isPaymentExpired(req.priceSetAt)
-          ? "Booking Expired"
-          : "Waiting for Payment"
-        : "New Request"}
-    </span>
-
-    <span className="text-gray-400 font-normal text-xs">
-      • {timeAgo(req.createdAt)}
-    </span>
-  </span>
-
-  {/* RIGHT : BOOKING ID + PRICE */}
-  <div className="text-right">
-    <div className="text-gray-400 text-sm">
-      {req.id} • {req.date}
-    </div>
-
-    {(req.status === "PAYMENT_PENDING" ||
-      req.status === "PAYMENT_CONFIRMED") && (
-      <div className="mt-1 text-base font-semibold text-gray-900">
-  ₹{req.price}
-</div>
-
-    )}
-  </div>
-</div>
-
-{/* CUSTOMER INFO */}
-  <div className="space-y-0.5 mt-1">  {/* Reduced spacing */}
-  <p className="text-base font-semibold -mt-0.5">
-    {req.customerName}
-  </p>
-
-    <div className="flex items-center gap-2 text-sm text-gray-600">
-      <Phone className="w-4 h-4" />
-      {req.phone}
-    </div>
-  </div>
-
-  {/* LOCATIONS */}
- <div className="flex items-center gap-8 mt-3 text-sm text-gray-700">
-    <div className="flex items-center gap-2">
-      <MapPin className="w-4 h-4 text-green-600" />
-      {req.pickupAddress?.city}, {req.pickupAddress?.state}
-    </div>
-
-    <div className="flex items-center gap-2">
-      <MapPin className="w-4 h-4 text-red-500" />
-      {req.dropAddress?.city}, {req.dropAddress?.state}
-    </div>
-  </div>
-
-  {/* DETAILS */}
-  <div className="flex items-center gap-6 mt-3 text-sm text-gray-600">
-    <span className="flex items-center gap-1">
-      <Weight className="w-4 h-4" />
-      {req.weight} kg
-    </span>
-
-    <span className="flex items-center gap-1">
-      <Package className="w-4 h-4" />
-      {req.goodsType}
-    </span>
-  </div>
-
-  {/* DIVIDER LINE */}
-  <hr className="my-4 border-gray-200" />
-
-  {/* ACTION BUTTONS */}
- <div className="flex justify-end gap-3">
-  <button
-    onClick={() => {
-      setSelectedBooking(req);
-      setShowDetails(true);
-    }}
-    className="flex items-center gap-2 px-4 py-2 border rounded-lg text-sm hover:bg-gray-100"
-  >
-    <Eye className="w-4 h-4" />
-    View Details
-  </button>
-
-  <button
-    onClick={() => handleReject(req.id)}
-    className="px-4 py-2 border border-red-500 text-red-600 rounded-lg text-sm hover:bg-red-50"
-  >
-    Reject
-  </button>
-
-{req.status?.toUpperCase() === "PENDING" && kycStatus !== "MANUAL_REVIEW" && agency?.featureAllowed && (
-  <button
-    onClick={async () => {
-      try {
-        // 1️⃣ Firestore se agency ka perKmRate fetch karo
-        const agencyDoc = await getDoc(doc(db, "agencies", auth.currentUser.uid));
-        const perKmRate = agencyDoc.exists() ? agencyDoc.data().perKmRate || 0 : 0;
-
-        // 2️⃣ Distance from booking
-   let distance = req.distance; // can be null
-
-
-        let additionalPrice = 0;
-        let totalPrice = distance * perKmRate;
-
-        // 3️⃣ Swal modal
- Swal.fire({
-  title: 'Set Price',
-  html: `
-    <div class="text-left space-y-2">
-      
-      ${
-        distance === null
-          ? `
-            <label class="block mb-1">Enter Distance (km):</label>
-            <input type="number" id="manualDistance" class="swal2-input" placeholder="e.g. 120" />
-          `
-          : `<p>Total Distance: <b>${distance} km</b></p>`
-      }
-
-      <p>Per Km Rate: <b>₹${perKmRate}</b></p>
-
-      <label class="block mt-2 mb-1">Additional Charges (₹):</label>
-      <input type="number" id="additionalPrice" class="swal2-input" placeholder="0" />
-
-      <p class="mt-2">Total Price: <b id="totalPrice">₹0</b></p>
-    </div>
-  `,
-  showCancelButton: true,
-  confirmButtonText: 'Confirm & Send for Payment',
-  preConfirm: () => {
-    const add = Number(
-      Swal.getPopup().querySelector('#additionalPrice')?.value
-    ) || 0;
-
-    if (distance === null) {
-      const manual = Number(
-        Swal.getPopup().querySelector('#manualDistance')?.value
-      );
-      if (!manual || manual <= 0) {
-        Swal.showValidationMessage("Please enter valid distance");
-        return false;
-      }
-      distance = manual;
-    }
-
-    return {
-      distance,
-      totalPrice: distance * perKmRate + add,
-      additionalCharges: add
-    };
-  },
-  didOpen: () => {
-    const calc = () => {
-      const add =
-        Number(
-          Swal.getPopup().querySelector('#additionalPrice')?.value
-        ) || 0;
-
-      const manual =
-        Number(
-          Swal.getPopup().querySelector('#manualDistance')?.value
-        ) || distance || 0;
-
-      Swal.getPopup().querySelector(
-        '#totalPrice'
-      ).innerHTML = `₹${(manual * perKmRate + add).toFixed(2)}`;
-    };
-
-    Swal.getPopup().querySelectorAll('input').forEach(i =>
-      i.addEventListener('input', calc)
-    );
-  }
-}).then(async (res) => {
-  if (!res.isConfirmed) return;
-
-  await updateDoc(doc(db, "bookings", req.id), {
-    distance: res.value.distance,   // ✅ manual save
-    price: res.value.totalPrice,
-    additionalCharges: res.value.additionalCharges,
-    perKmRate,
-    status: "PAYMENT_PENDING",
-    priceSetAt: serverTimestamp(),
-  });
-
-  Swal.fire("Price Sent", "Waiting for customer payment", "success");
-});
-
-      } catch (err) {
-        console.error(err);
-        Swal.fire("Error", "Unable to fetch rate or set price", "error");
-      }
-    }}
-    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
-  >
-    Set Price
-  </button>
+       {activePage === "booking" && (
+  <BookingRequests
+    bookingRequests={bookingRequests}
+    kycStatus={kycStatus}
+    setSelectedBooking={setSelectedBooking}
+    setShowDetails={setShowDetails}
+    setAssignBooking={setAssignBooking}
+    setShowAssignModal={setShowAssignModal}
+    handleReject={handleReject}
+  />
 )}
-
-
-{req.status === "PAYMENT_CONFIRMED" && kycStatus !== "MANUAL_REVIEW" && (
-  <button
-    onClick={() => {
-      setAssignBooking(req);
-      setShowAssignModal(true);
-    }}
-    
-    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
-  >
-  
-    <Check className="w-4 h-4" />
-    Accept & Assign
-  </button>
+{activePage === "fleet" && <ManageVehicle />}
+{activePage === "settings" && <AgencySettings />}
+{activePage === "completed" && <Completed />}
+{activePage === "activeBooking" && (
+  <ActiveBooking
+    showPanel={true}
+    onClose={() => setActivePage("overview")}
+    sideNavOpen={open}
+  />
 )}
-</div>
-</div>
-              ))}
-            </div>
-          </div>
-        )}
+<Footer />
 
-        {activePage === "fleet" && <ManageVehicle />}
-        {activePage === "completed" && <Completed />}
-        {activePage === "activeBooking" && (
-        <ActiveBooking
-          showPanel={true}
-          onClose={() => setActivePage("overview")}
-          sideNavOpen={open}
-        />
-)}
-       {/* Footer & Modals */}
-        <Footer />
-        <BookingDetails
-          open={showDetails}
-          booking={selectedBooking}
-          onClose={() => {
-            setShowDetails(false);
-            setSelectedBooking(null);
-          }}
-        />
-        <AssignBookingModal
-          open={showAssignModal}
-          booking={assignBooking}
-          onClose={() => {
-            setShowAssignModal(false);
-            setAssignBooking(null);
-          }}
-        />
+<BookingDetails
+  open={showDetails}
+  booking={selectedBooking}
+  onClose={() => {
+    setShowDetails(false);
+    setSelectedBooking(null);
+  }}
+/>
+
+<AssignBookingModal
+  open={showAssignModal}
+  booking={assignBooking}
+  onClose={() => {
+    setShowAssignModal(false);
+    setAssignBooking(null);
+  }}
+/>
       </div>
     </div>
   );

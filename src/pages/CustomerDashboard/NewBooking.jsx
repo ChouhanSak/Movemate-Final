@@ -1,12 +1,12 @@
 // src/pages/customer/NewBooking.jsx
-import React, { useState, useEffect } from "react";
-import { db } from "../../firebase";
+import React, { useState, useEffect,useRef } from "react";
+import { db } from "../../Firebase";
 import { collection, addDoc, serverTimestamp, query, onSnapshot } from "firebase/firestore";
-import { auth } from "../../firebase";
+import { auth } from "../../Firebase";
 import { getCoordinates } from "../../utils/osmUtils";
 import { calculateDistance } from "../../utils/distanceUtils";
 import { doc, getDoc } from "firebase/firestore";
-
+import { searchAddress } from "../../utils/osmSearch";
 function StepIndicator({ step }) {
   const steps = ["Requirements", "Select Agency", "More Details", "Summary"];
 
@@ -39,7 +39,7 @@ function StepIndicator({ step }) {
 
 export default function NewBooking() {
   const [step, setStep] = useState(1);
-  
+const [sortedAgencies, setSortedAgencies] = useState([]);
   // STEP 1 - Pickup & Drop
   const [street, setStreet] = useState("");
   const [city, setCity] = useState("");
@@ -52,6 +52,61 @@ export default function NewBooking() {
 const [distance, setDistance] = useState(null);
 const [distanceLoading, setDistanceLoading] = useState(false);
 const [kycStatus, setKycStatus] = useState("");
+const [pickupQuery, setPickupQuery] = useState("");
+const [pickupSuggestions, setPickupSuggestions] = useState([]);
+const [dropQuery, setDropQuery] = useState("");
+const [dropSuggestions, setDropSuggestions] = useState([]);
+const pickupRef = useRef(null);
+// INPUT VALIDATIONS (STEP 3)
+
+const handleCustomerNameChange = (e) => {
+  const value = e.target.value;
+  if (/^[a-zA-Z\s]*$/.test(value)) {
+    setCustomerName(value);
+  }
+};
+
+const handleProductCountChange = (e) => {
+  const value = e.target.value.replace(/\D/g, "");
+  setProductCount(value);
+};
+
+const handleWeightChange = (e) => {
+  const value = e.target.value;
+  if (/^\d*\.?\d*$/.test(value)) {
+    setWeight(value);
+  }
+};
+
+useEffect(() => {
+  const handleClickOutside = (e) => {
+    if (pickupRef.current && !pickupRef.current.contains(e.target)) {
+      setPickupSuggestions([]); //  yahi se box band hoga
+    }
+  };
+
+  document.addEventListener("mousedown", handleClickOutside);
+  
+  return () => {
+    document.removeEventListener("mousedown", handleClickOutside);
+  };
+}, []);
+// useEffect(() => {
+//   const delay = setTimeout(async () => {
+//     const results = await searchAddress(pickupQuery);
+//     setPickupSuggestions(results);
+//   }, 400); // debounce
+
+//   return () => clearTimeout(delay);
+// }, [pickupQuery]);
+// useEffect(() => {
+//   const delay = setTimeout(async () => {
+//     const results = await searchAddress(dropQuery);
+//     setDropSuggestions(results);
+//   }, 400);
+
+//   return () => clearTimeout(delay);
+// }, [dropQuery]);
 useEffect(() => {
   const fetchKyc = async () => {
     if (!auth.currentUser) return;
@@ -131,7 +186,7 @@ const [loadingAgencies, setLoadingAgencies] = useState(true);
 const [searchAgency, setSearchAgency] = useState("");
 const [agreed, setAgreed] = useState(false);
 const today = new Date();
-today.setDate(today.getDate() + 2); // ✅ current date + 2 days
+today.setDate(today.getDate() + 2); //  current date + 2 days
 
 const yyyy = today.getFullYear();
 const mm = String(today.getMonth() + 1).padStart(2, "0"); // month 0-indexed
@@ -155,7 +210,7 @@ const minDate = `${yyyy}-${mm}-${dd}`; // YYYY-MM-DD format
   weight &&
   pickupDate &&
   timeSlot;
-  // 🔥 DYNAMIC AGENCIES FROM FIRESTORE
+  //  DYNAMIC AGENCIES FROM FIRESTORE
  useEffect(() => {
   setLoadingAgencies(true);
 
@@ -166,28 +221,67 @@ const minDate = `${yyyy}-${mm}-${dd}`; // YYYY-MM-DD format
     (snap) => {
       console.log("AGENCIES SNAPSHOT:", snap.docs.length);
 
-      const allAgencies = snap.docs.map(d => ({
-        uid: d.id,
-        name: d.data().agencyName || "Agency Name",
-        rating: d.data().rating || 4.5,
-        address: d.data().address || "N/A",
-        city: d.data().city || "",
-        phone: d.data().phone || "N/A",
-        ratePerKm: d.data().perKmRate || 10,
-      }));
+      const allAgencies = snap.docs
+  .map(d => ({
+    uid: d.id,
+    name: d.data().agencyName || "Agency Name",
+    rating: d.data().averageRating || 0,
+    address: d.data().address || "N/A",
+    city: d.data().city || "",
+    state: d.data().state || "",
+    phone: d.data().phone || "N/A",
+    ratePerKm: d.data().perKmRate || 10,
+    kycStatus: d.data().kyc?.status || "NOT_SUBMITTED",
+  }))
+  .filter(a => a.kycStatus !== "MANUAL_REVIEW"); //  filter out manual review agencies
 
       setAgencies(allAgencies);
-      setLoadingAgencies(false); // ✅ spinner band
+      setLoadingAgencies(false); //  spinner band
     },
     (error) => {
       console.error("🔥 Firestore error:", error);
-      setLoadingAgencies(false); // ✅ spinner band EVEN ON ERROR
+      setLoadingAgencies(false); // spinner band EVEN ON ERROR
     }
   );
 
   return () => unsub();
 }, []);
+useEffect(() => {
+  const sortByDistance = async () => {
+    if (!city || agencies.length === 0) {
+      setSortedAgencies(agencies);
+      return;
+    }
 
+    try {
+      const userLoc = await getCoordinates(`${city}, ${stateName}`);
+
+      const agenciesWithDistance = await Promise.all(
+        agencies.map(async (a) => {
+          const agencyLoc = await getCoordinates(`${a.city}`);
+          let km = Infinity;
+
+          if (userLoc && agencyLoc) {
+            km = await calculateDistance(userLoc, agencyLoc);
+          }
+
+          return { ...a, distanceFromUser: km };
+        })
+      );
+
+      agenciesWithDistance.sort(
+        (a, b) => a.distanceFromUser - b.distanceFromUser
+      );
+
+      setSortedAgencies(agenciesWithDistance);
+    } catch (err) {
+      console.error("Sorting error:", err);
+      setSortedAgencies(agencies);
+    }
+  };
+
+  sortByDistance();
+}, [city, stateName, agencies]);
   // Helper to allow only numbers up to max digits
   const setDigitsMax = (setter, value, max) => {
     const digits = value.replace(/\D/g, "");
@@ -213,8 +307,6 @@ const handleConfirmBooking = async () => {
 //   });
 //   return;
 // }
-
-
   if (!selectedAgency) {
     alert("Please select an agency");
     return;
@@ -232,7 +324,7 @@ if (
   return;
 }
   try {
-    // 1️⃣ Create booking
+    // 1 Create booking
     const bookingRef = await addDoc(collection(db, "bookings"), {
       customerId: auth.currentUser.uid,
       customerName,
@@ -256,14 +348,20 @@ if (
       
     });
 
-    // 2️⃣ Notification after booking is created
+
+    //  Notification after booking is created
     await addDoc(collection(db, "notifications"), {
-      agencyId: selectedAgency.uid,
-      message: `New booking request from ${customerName}`,
-      bookingId: bookingRef.id,
-      read: false,
-      createdAt: serverTimestamp(),
-    });
+  userId: selectedAgency.uid,
+  agencyId: selectedAgency.uid,
+  userType: "agency",                     // for agency only
+  title: "New Booking Request",
+  message: `New booking from ${customerName}`,
+  bookingId: bookingRef.id,
+  read: false,
+  createdAt: serverTimestamp(),
+     
+});
+
 
       alert("✅ Booking Confirmed! Please wait for the agency to respond.");
 
@@ -282,21 +380,14 @@ setAgreed(false);
       alert("❌ Booking failed");
     }
   };
-const filteredAgencies = agencies.filter(a => {
-  const search = searchAgency.toLowerCase().trim();
+const filteredAgencies = sortedAgencies.filter(a => {
+  const userState = stateName.trim().toLowerCase();
+  const agencyState = (a.state || "").trim().toLowerCase();
 
-  if (search) {
-    return (
-      a.name.toLowerCase().includes(search) ||
-      a.city.toLowerCase().includes(search) ||
-      a.address.toLowerCase().includes(search)
-    );
-  }
+  if (!userState) return false;
 
-  return city ? a.city.toLowerCase().includes(city.toLowerCase()) : true;
+  return agencyState === userState;
 });
-
-
   return (
     <div className="max-w-7xl mx-auto bg-white p-6 rounded shadow pb-20">
 
@@ -307,20 +398,115 @@ const filteredAgencies = agencies.filter(a => {
           <h1 className="text-2xl font-bold mb-6">Book New Transport</h1>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
-            <div>
-              <label className="block text-sm font-medium mb-1">Pickup Address</label>
-              <input className="border px-3 py-2 rounded w-full mb-2" placeholder="Street / House No" value={street} onChange={e => setStreet(e.target.value)} />
-              <input className="border px-3 py-2 rounded w-full mb-2" placeholder="City" value={city} onChange={e => setCity(e.target.value)} />
-              <input className="border px-3 py-2 rounded w-full" placeholder="State" value={stateName} onChange={e => setStateName(e.target.value)} />
-            </div>
+           {/* Pickup Address */}
+<div className="relative">
+  <div className="relative" ref={pickupRef}></div>
+  <label className="block text-sm font-medium mb-1">Pickup Address</label>
 
-            <div>
-              <label className="block text-sm font-medium mb-1">Delivery Address</label>
-              <input className="border px-3 py-2 rounded w-full mb-2" placeholder="Street / House No" value={dropStreet} onChange={e => setDropStreet(e.target.value)} />
-              <input className="border px-3 py-2 rounded w-full mb-2" placeholder="City" value={dropCity} onChange={e => setDropCity(e.target.value)} />
-              <input className="border px-3 py-2 rounded w-full" placeholder="State" value={dropStateName} onChange={e => setDropStateName(e.target.value)} />
-            </div>
+  {/* Street / Area */}
+  <input
+    className="border px-3 py-2 rounded w-full mb-2"
+    placeholder="Street / Area / Landmark"
+    value={street}
+    onChange={(e) => {
+      setStreet(e.target.value);
+      setPickupQuery(e.target.value); // triggers suggestions
+    }}
+  />
 
+  {/* City */}
+  <input
+    className="border px-3 py-2 rounded w-full mb-2"
+    placeholder="City"
+    value={city}
+    onChange={(e) => setCity(e.target.value)} // now user can type
+  />
+
+  {/* State */}
+  <input
+    className="border px-3 py-2 rounded w-full mb-2"
+    placeholder="State"
+    value={stateName}
+    onChange={(e) => setStateName(e.target.value)} // now user can type
+  />
+
+  {/* Suggestions dropdown */}
+  {/* {pickupSuggestions.length > 0 && (
+    <div className="absolute top-full left-0 right-0 border rounded bg-white shadow max-h-48 overflow-y-auto z-50">
+      {pickupSuggestions.map((s, i) => (
+        <div
+          key={i}
+          className="px-3 py-2 hover:bg-purple-100 cursor-pointer text-sm"
+          onClick={() => {
+            // Auto-fill street, city, state
+            setStreet(s.address.road || "");
+            setCity(s.address.city || s.address.town || "");
+            setStateName(s.address.state || "");
+            // Clear query and suggestions
+            setPickupQuery("");
+            setPickupSuggestions([]);
+          }}
+        >
+          {s.label}
+        </div>
+      ))}
+    </div>
+  )} */}
+</div>
+
+{/* Drop Address */}
+<div className="relative">
+  <div className="relative" ref={pickupRef}></div>
+  <label className="block text-sm font-medium mb-1">Delivery Address</label>
+
+  {/* Street / Area */}
+  <input
+    className="border px-3 py-2 rounded w-full mb-2"
+    placeholder="Street / House No"
+    value={dropStreet}
+    onChange={(e) => {
+      setDropStreet(e.target.value);
+      setDropQuery(e.target.value); // triggers suggestions
+    }}
+  />
+
+  {/* City */}
+  <input
+    className="border px-3 py-2 rounded w-full mb-2"
+    placeholder="City"
+    value={dropCity}
+    onChange={(e) => setDropCity(e.target.value)} // user can type
+  />
+
+  {/* State */}
+  <input
+    className="border px-3 py-2 rounded w-full mb-2"
+    placeholder="State"
+    value={dropStateName}
+    onChange={(e) => setDropStateName(e.target.value)} // user can type
+  />
+
+  {/* Suggestions dropdown */}
+  {/* {dropSuggestions.length > 0 && (
+    <div className="absolute top-full left-0 right-0 border rounded bg-white shadow max-h-48 overflow-y-auto z-50">
+      {dropSuggestions.map((s, i) => (
+        <div
+          key={i}
+          className="px-3 py-2 hover:bg-purple-100 cursor-pointer text-sm"
+          onClick={() => {
+            setDropStreet(s.address.road || "");
+            setDropCity(s.address.city || s.address.town || "");
+            setDropStateName(s.address.state || "");
+            setDropQuery("");
+            setDropSuggestions([]);
+          }}
+        >
+          {s.label}
+        </div>
+      ))}
+    </div>
+  )} */}
+</div>
             <div>
               <label className="block text-sm font-medium mb-1">6-digit Pincode</label>
               <input className="border px-3 py-2 rounded w-full" placeholder="Enter pincode" value={pincode} onChange={e => setDigitsMax(setPincode, e.target.value, 6)} />
@@ -401,7 +587,9 @@ const filteredAgencies = agencies.filter(a => {
                     <p className="text-sm text-gray-500">
                     📞 {a.phone}
                      </p>
-                    <p className="text-yellow-500">⭐ {a.rating}</p>
+                    <p className="text-yellow-500">
+  ⭐ {a.rating > 0 ? a.rating.toFixed(1) : "No ratings yet"}
+</p>
                   </div>
                   <div className="text-green-600 font-medium text-lg">
                     ₹{a.ratePerKm} / km
@@ -424,8 +612,14 @@ const filteredAgencies = agencies.filter(a => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium mb-1">Customer Name</label>
-              <input className="border px-3 py-2 rounded w-full" placeholder="Enter customer full name" value={customerName} onChange={e => setCustomerName(e.target.value)} />
+            <label className="block text-sm font-medium mb-1">Customer Name</label>
+           <input
+            className="border px-3 py-2 rounded w-full"
+            placeholder="Enter customer full name"
+            value={customerName}
+            onChange={handleCustomerNameChange}
+          />
+
             </div>
 
             <div>
@@ -442,18 +636,23 @@ const filteredAgencies = agencies.filter(a => {
 
             <div>
               <label className="block text-sm font-medium mb-1">Number of Products</label>
-              <input className="border px-3 py-2 rounded w-full" placeholder="Enter number of products" value={productCount} onChange={e => setProductCount(e.target.value)} />
+                <input
+                  className="border px-3 py-2 rounded w-full"
+                  placeholder="Enter number of products"
+                  value={productCount}
+                  onChange={handleProductCountChange}
+                />
             </div>
 
             {/* Total Weight */}
 <div>
   <label className="block text-sm font-medium mb-1">Total Weight (kg)</label>
   <input
-    className="border px-3 py-2 rounded w-full"
-    placeholder="Enter total weight in kg"
-    value={weight}
-    onChange={(e) => setWeight(e.target.value)}
-  />
+  className="border px-3 py-2 rounded w-full"
+  placeholder="Enter total weight in kg"
+  value={weight}
+  onChange={handleWeightChange}
+/>
 </div>
 
 {/* Pickup Date & Time — NEXT LINE */}
@@ -582,4 +781,4 @@ const filteredAgencies = agencies.filter(a => {
 
     </div>
   );
-}  
+}

@@ -8,6 +8,9 @@ import Footer from "../components/Footer";
 import Counter from "../components/Counter";
 import ScrollReveal from "../components/ScrollReveal";
 import { useNavigate, useLocation } from "react-router-dom";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { useEffect } from "react";
+import { db } from "../Firebase";
 
 export default function UserTypeSelector({ onSelect, setPage }) {
   const [userType, setUserType] = useState(null);
@@ -17,6 +20,50 @@ const location = useLocation();
 const params = new URLSearchParams(location.search);
 const mode = params.get("mode"); // "login" | null
 const isLoginMode = mode === "login";
+const [stats, setStats] = useState({
+  verifiedAgencies: 0,
+  happyCustomers: 0,
+  successfulDeliveries: 0,
+});
+useEffect(() => {
+  const fetchStats = async () => {
+    try {
+      // Happy Customers
+      const customerSnap = await getDocs(collection(db, "customers"));
+      const happy = customerSnap.docs.filter(
+        (doc) => doc.data().status !== "REJECTED"
+      );
+
+      // Verified Agencies
+      const agencySnap = await getDocs(collection(db, "agencies"));
+      const verified = agencySnap.docs.filter(
+        (doc) => doc.data().status !== "REJECTED"
+      );
+
+      // Successful Deliveries
+      const bookingsSnap = await getDocs(collection(db, "bookings"));
+      const successful = bookingsSnap.docs.filter(
+        (doc) => doc.data().status === "COMPLETED"
+      );
+
+      // Set stats dynamically
+      setStats({
+        happyCustomers: happy.length,
+        verifiedAgencies: verified.length,
+        successfulDeliveries: successful.length, // ✅ use dynamic count
+      });
+
+      console.log("Happy Customers:", happy.length);
+      console.log("Verified Agencies:", verified.length);
+      console.log("Successful Deliveries:", successful.length);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  fetchStats();
+}, []);
+
 
 const handleSelect = (type) => {
   setUserType(type);
@@ -38,19 +85,7 @@ const handleSelect = (type) => {
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-indigo-50 to-white text-gray-800">
-      {/* Header */}
-      <header className="flex justify-between items-center px-10 py-6 bg-white shadow-sm">
-        <div className="flex items-center space-x-2">
-          <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-2 rounded-lg">
-            <img src={smallTruck} alt="Truck Logo" className="w-6 h-6" />
-          </div>
-          <h1 className="text-xl font-bold text-gray-900">MoveMate</h1>
-          <span className="text-sm text-gray-500">
-            Goods Transportation Platform
-          </span>
-        </div>
-      </header>
-
+      
       {/* Hero Section */}
       <main className="flex flex-col lg:flex-row justify-between items-start px-10 py-16 lg:gap-x-24">
         <div className="max-w-2xl mx-auto text-left">
@@ -174,17 +209,22 @@ const handleSelect = (type) => {
   <div className="flex flex-col sm:flex-row justify-center items-center gap-8 max-w-5xl mx-auto">
 
     <div className="bg-white rounded-xl shadow-md p-9 w-64 text-center hover:shadow-xl transition">
-      <Counter to={50} duration={1500} color="text-purple-600" />
+      <Counter to={stats.verifiedAgencies} duration={1500} color="text-purple-600" />
       <p className="text-gray-500 mt-2">Verified Agencies</p>
     </div>
 
     <div className="bg-white rounded-xl shadow-md p-9 w-64 text-center hover:shadow-xl transition">
-      <Counter to={80} duration={1500} color="text-teal-600" />
-      <p className="text-gray-500 mt-2">Happy Customers</p>
+      <Counter
+  to={stats.happyCustomers}
+  duration={1500}
+  color="text-teal-600"
+/>
+<p className="text-gray-500 mt-2">Happy Customers</p>
+
     </div>
 
     <div className="bg-white rounded-xl shadow-md p-9 w-64 text-center hover:shadow-xl transition">
-      <Counter to={100} duration={1500} color="text-pink-600" />
+      <Counter to={stats.successfulDeliveries} duration={1500} color="text-pink-600" />
       <p className="text-gray-500 mt-2">Successful Deliveries</p>
     </div>
 

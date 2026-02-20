@@ -5,7 +5,41 @@ import { doc, setDoc } from "firebase/firestore";
 import { User as UserIcon } from "lucide-react";
 import Swal from "sweetalert2"; // 📌 Added for popups
 import { useNavigate } from "react-router-dom";
-
+const ONLY_ALPHABETS_REGEX = /^[A-Za-z\s]*$/;
+const STATES = [
+  "Andhra Pradesh",
+  "Arunachal Pradesh",
+  "Assam",
+  "Bihar",
+  "Chhattisgarh",
+  "Goa",
+  "Gujarat",
+  "Haryana",
+  "Himachal Pradesh",
+  "Jharkhand",
+  "Karnataka",
+  "Kerala",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Manipur",
+  "Meghalaya",
+  "Mizoram",
+  "Nagaland",
+  "Odisha",
+  "Punjab",
+  "Rajasthan",
+  "Sikkim",
+  "Tamil Nadu",
+  "Telangana",
+  "Tripura",
+  "Uttar Pradesh",
+  "Uttarakhand",
+  "West Bengal",
+  "Delhi",
+  "Jammu and Kashmir",
+  "Ladakh",
+  "Puducherry",
+];
 export default function Signupc({ userType, onBack }) {
 const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
   const res = await fetch("http://localhost:5000/verify-kyc", {
@@ -15,20 +49,17 @@ const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
       imageUrl,
       name: fullName,
       docType,
-      userType: "customer",
     }),
   });
-
-  const data = await res.json();
-  return data.verified ? "AUTO_VERIFIED" : "MANUAL_REVIEW";
+  if (!res.ok) {
+    throw new Error("Backend KYC failed");
+  }
+  return await res.json();
 };
-
-
   const uploadToCloudinary = async (file) => {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("upload_preset", "movemate_upload");
-
   const res = await fetch(
    "https://api.cloudinary.com/v1_1/dlh1uo28j/image/upload",
     {
@@ -36,19 +67,17 @@ const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
       body: formData,
     }
   );
-
   const data = await res.json();
   return data.secure_url;
 };
-
   useEffect(() => {
     console.log("✅ SignUpForm mounted", { userType });
   }, [userType]);
 const navigate = useNavigate();
+const [showStateDropdown, setShowStateDropdown] = useState(false);
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
-
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -58,69 +87,74 @@ const navigate = useNavigate();
     address: "",
     pinCode: "",
     city: "",
+    state:"",
      kycFile: null,
   kycType: "",
   });
+  const passwordMismatch =
+  formData.confirmPassword.length > 0 &&
+  formData.password !== formData.confirmPassword;
+ const handleChange = (field, value) => {
 
-  const handleChange = (field, value) => {
-    if (field === "phone") value = value.replace(/\D/g, "").slice(0, 10);
-    if (field === "pinCode") value = value.replace(/\D/g, "").slice(0, 6);
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
+  // Numbers block for Name, City, State
+  if (["fullName", "city", "state"].includes(field)) {
+    if (!ONLY_ALPHABETS_REGEX.test(value)) return;
+  }
+
+  if (field === "phone") value = value.replace(/\D/g, "").slice(0, 10);
+  if (field === "pinCode") value = value.replace(/\D/g, "").slice(0, 6);
+
+  setFormData((prev) => ({ ...prev, [field]: value }));
+};
 
   const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    // ⭐ VALIDATION FOR STEP 1
+    //  VALIDATION FOR STEP 1
     if (step === 1) {
       if (!formData.fullName.trim()) {
         Swal.fire({ icon: "error", title: "Full Name Missing", text: "Full Name cannot be empty!" });
         return;
       }
-
+      if (!formData.state.trim()) {
+      Swal.fire({ icon: "error", title: "State Missing", text: "Please select your state." });
+     return;
+     }
       if (!validateEmail(formData.email)) {
         Swal.fire({ icon: "error", title: "Invalid Email", text: "Please enter a valid email address." });
         return;
       }
-
       if (formData.phone.length !== 10) {
         Swal.fire({ icon: "error", title: "Invalid Phone", text: "Phone number must be 10 digits." });
         return;
       }
-
       if (!formData.password || !formData.confirmPassword) {
         Swal.fire({ icon: "error", title: "Password Missing", text: "Please fill both password fields." });
         return;
       }
-
       if (formData.password !== formData.confirmPassword) {
         Swal.fire({ icon: "error", title: "Password Mismatch", text: "Passwords do not match!" });
         return;
       }
-
       if (!formData.address.trim()) {
         Swal.fire({ icon: "error", title: "Address Missing", text: "Please enter your complete address." });
         return;
       }
-
       if (!formData.city.trim()) {
         Swal.fire({ icon: "error", title: "City Missing", text: "Please enter your city." });
         return;
       }
-
       if (formData.pinCode.length !== 6) {
         Swal.fire({ icon: "error", title: "Invalid PIN Code", text: "PIN Code must be 6 digits." });
         return;
       }
-
       setStep(2);
       return;
     }
-
-    // ⭐ VALIDATION FOR STEP 2 (KYC)
+    //  VALIDATION FOR STEP 2 (KYC)
   if (step === 2) {
+
   if (!formData.kycFile) {
     Swal.fire({
   icon: "error",
@@ -134,18 +168,21 @@ const navigate = useNavigate();
   try {
     setLoading(true);
 
-    // 1️⃣ Upload Aadhaar to Cloudinary
+    //  Upload Aadhaar to Cloudinary
     const kycUrl = await uploadToCloudinary(formData.kycFile);
 
-    // 2️⃣ Call backend OCR for auto verification
-    const kycStatus = await verifyKycWithBackend(
+    //  Call backend OCR for auto verification
+    const kycResult = await verifyKycWithBackend(
   kycUrl,
   formData.fullName,
-  formData.kycType   // 🔥 VERY IMPORTANT
+  formData.kycType
 );
+// ❗ Safety check (VERY IMPORTANT)
+if (!kycResult || !kycResult.status) {
+  throw new Error("eKYC verification failed");
+}
 
-
-    // 3️⃣ Create user in Firebase
+    //  Create user in Firebase
     const userCredential = await createUserWithEmailAndPassword(
       auth,
       formData.email,
@@ -153,20 +190,46 @@ const navigate = useNavigate();
     );
     const uid = userCredential.user.uid;
 
-    await setDoc(doc(db, "customers", uid), {
-      fullName: formData.fullName,
-      email: formData.email,
-      phone: formData.phone,
-      userType: "customer",
-      kycUrl,
-      kycStatus,
-      createdAt: new Date(),
-    });
+   await setDoc(doc(db, "customers", uid), {
+  fullName: formData.fullName,
+  email: formData.email,
+  phone: formData.phone,
+  userType: "customer",
+  state: formData.state,
+  address: formData.address,   
+  city: formData.city,          
+  pinCode: formData.pinCode,   
+
+kyc: {
+  status: kycResult.status,
+  extracted: {
+    nameFromDoc: kycResult.extracted?.nameFromDoc || null,
+    dob: kycResult.extracted?.dob || null,
+    gender: kycResult.extracted?.gender || null,
+    maskedAadhaar: kycResult.extracted?.maskedAadhaar || null,
+    ageBand: kycResult.extracted?.ageBand || null,
+  },
+
+  note: kycResult.note || null,
+  review: {
+    reviewedBy: null,
+    reviewedAt: null,
+    reason: null
+  }
+},
+kycUrl: kycUrl,
+createdAt: new Date(),
+});
+
 
     Swal.fire({
       icon: "success",
       title: "Registration Successful!",
-      text: `KYC Status: ${kycStatus}`
+      text:
+  kycResult.status === "AUTO_VERIFIED"
+    ? "eKYC Auto Verified Successfully"
+    : "eKYC sent for Manual Review"
+
     }).then(() => navigate("/customer-dashboard"));
 
     setLoading(false);
@@ -180,9 +243,8 @@ const navigate = useNavigate();
 
   const kycDocuments = [
     { name: "Aadhar Card", desc: "Government issued ID proof" },
-    { name: "PAN Card", desc: "Tax identification document" },
   ];
-
+  
   const slugId = (name) => name.replace(/\s+/g, "-").toLowerCase();
 
  const isAnyDocUploaded = !!formData.kycFile;
@@ -278,7 +340,7 @@ const navigate = useNavigate();
                 />
               </div>
 
-              {/* City + PIN Code */}
+ {/* City + State */}
 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
   <div>
     <label className="block font-medium mb-1">City</label>
@@ -291,16 +353,55 @@ const navigate = useNavigate();
   </div>
 
   <div>
-    <label className="block font-medium mb-1">PIN Code</label>
+  <label className="block font-medium mb-1">State</label>
+
+  <div className="relative">
     <input
-      placeholder="6-digit PIN code"
-      className="w-full p-3 border rounded-lg"
-      value={formData.pinCode}
-      onChange={(e) => handleChange("pinCode", e.target.value)}
+      type="text"
+      placeholder="Select State"
+      className="w-full p-3 border rounded-lg bg-white"
+      value={formData.state}
+      onChange={(e) => {
+        handleChange("state", e.target.value);
+        setShowStateDropdown(true);
+      }}
+      onFocus={() => setShowStateDropdown(true)}
+      onBlur={() => setTimeout(() => setShowStateDropdown(false), 150)}
     />
+
+    {showStateDropdown && (
+      <div className="absolute left-0 top-full mt-1 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto z-50">
+        {STATES.filter((s) =>
+          s.toLowerCase().includes(formData.state.toLowerCase())
+        ).map((state) => (
+          <div
+            key={state}
+            className="px-3 py-2 cursor-pointer hover:bg-gray-100"
+            onMouseDown={() => {
+              handleChange("state", state);
+              setShowStateDropdown(false);
+            }}
+          >
+            {state}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   </div>
 </div>
 
+
+{/* PIN Code */}
+<div>
+  <label className="block font-medium mb-1">PIN Code</label>
+  <input
+    placeholder="6-digit PIN code"
+    className="w-full p-3 border rounded-lg"
+    value={formData.pinCode}
+    onChange={(e) => handleChange("pinCode", e.target.value)}
+  />
+</div>
 
               <button type="submit" className="w-full py-3 bg-blue-600 text-white rounded-lg">
                Next
@@ -311,8 +412,8 @@ const navigate = useNavigate();
           {/* STEP 2 */}
           {step === 2 && (
             <>
-              <h2 className="text-xl font-bold text-center mb-2">Customer KYC Verification</h2>
-              <p className="text-sm text-gray-500 text-center mb-4">Upload any one of the below documents</p>
+              <h2 className="text-xl font-bold text-center mb-2">Customer eKYC Verification</h2>
+              <p className="text-sm text-gray-500 text-center mb-4">Upload your document</p>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 {kycDocuments.map((doc) => {
@@ -334,8 +435,8 @@ const navigate = useNavigate();
       if (e.target.files && e.target.files.length > 0) {
         setFormData((prev) => ({
           ...prev,
-          kycFile: e.target.files[0], // ✅ actual file
-          kycType: doc.name,          // ✅ Aadhaar / PAN / Voter
+          kycFile: e.target.files[0], // actual file
+          kycType: doc.name,          //  Aadhaar / PAN / Voter
         }));
       }
     }}

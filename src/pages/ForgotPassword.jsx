@@ -1,6 +1,8 @@
 import React, { useState } from "react";
-import { auth } from "../firebase";
+import { auth } from "../Firebase";
 import { sendPasswordResetEmail } from "firebase/auth";
+import { db } from "../Firebase";
+import { collection, query, where, getDocs } from "firebase/firestore";
 import { useNavigate, useParams } from "react-router-dom";
 
 export default function ForgotPassword() {
@@ -11,25 +13,48 @@ export default function ForgotPassword() {
   const { userType } = useParams(); // customer / agency
 
   const handleReset = async () => {
-    if (!email) {
-      alert("Please enter your registered email");
+  if (!email) {
+    alert("Please enter your registered email");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    //  Select collection based on userType
+    const usersRef = collection(
+      db,
+      userType === "customer" ? "customers" : "agencies"
+    );
+
+    //  Check if email exists in Firestore
+    const q = query(usersRef, where("email", "==", email));
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      alert("This email is not registered ❌");
+      setLoading(false);
       return;
     }
 
-    setLoading(true);
-    try {
-      await sendPasswordResetEmail(auth, email);
-      alert("Password reset link sent to your email 📧\nCheck Inbox / Spam");
-      navigate(
-        userType === "customer"
-          ? "/login/customer"
-          : "/login/agency"
-      );
-    } catch (error) {
-      alert(error.message);
-    }
-    setLoading(false);
-  };
+    //  If email exists → send reset link
+    await sendPasswordResetEmail(auth, email);
+
+    alert("Password reset link sent 📧\nCheck Inbox / Spam");
+
+    navigate(
+      userType === "customer"
+        ? "/login/customer"
+        : "/login/agency"
+    );
+
+  } catch (error) {
+    alert("Something went wrong. Try again.");
+  }
+
+  setLoading(false);
+};
+
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 p-4">
