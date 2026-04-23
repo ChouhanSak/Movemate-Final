@@ -265,11 +265,6 @@ if (result.isDenied) {
         </tr>
 
         <tr>
-          <td style="padding:6px; color:#555"><b>Name from Aadhaar</b></td>
-          <td style="padding:6px; color:#222">${ex.nameFromDoc || "-"}</td>
-        </tr>
-
-        <tr>
           <td style="padding:6px; color:#555"><b>DOB</b></td>
           <td style="padding:6px; color:#222">${ex.dob || "-"}</td>
         </tr>
@@ -308,13 +303,39 @@ if (result.isDenied) {
   });
 
   if (res.isConfirmed) {
-    await updateDoc(doc(db, "customers", customer.id), {
-      status: action === "block" ? "Blocked" : "Active",
-    });
-    fetchCustomers();
-  }
-};
 
+  let reason = "";
+
+  //  BLOCK ke time reason lena hai
+  if (action === "block") {
+    const input = await Swal.fire({
+      title: "Block Reason",
+      input: "select",
+      inputOptions: {
+        fraud: "Suspicious activity",
+        abuse: "Abusive behavior",
+        fake: "Fake details",
+        other: "Other reason"
+      },
+      inputPlaceholder: "Select reason",
+      showCancelButton: true,
+      inputValidator: (value) => {
+        if (!value) return "Please select a reason!";
+      }
+    });
+
+    if (!input.value) return;
+    reason = input.value;
+  }
+
+  await updateDoc(doc(db, "customers", customer.id), {
+    status: action === "block" ? "Blocked" : "Active",
+    blockReason: action === "block" ? reason : "",
+  });
+
+  fetchCustomers();
+}
+}
 
   /* ---------------- COUNTS ---------------- */
   const totalCustomers = allCustomers.length;

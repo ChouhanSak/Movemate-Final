@@ -19,7 +19,7 @@ import { getDocs } from "firebase/firestore";
 import { Timestamp } from "firebase/firestore";
 
 /* ---------------- STATUS CONFIG ---------------- */
-const ACTIVE_STATUSES = ["BOOKING_PLACED", "IN_TRANSIT"];
+const ACTIVE_STATUSES = ["BOOKING_PLACED", "IN_TRANSIT","WAITING_FOR_PROOF"];
 
 const statusBadgeColor = (status) => {
   if (status === "BOOKING_PLACED") return "bg-indigo-100 text-indigo-700";
@@ -29,6 +29,10 @@ const statusBadgeColor = (status) => {
 };
 
 const formatStatus = (status) => (status ? status.replaceAll("_", " ") : "");
+const getDisplayStatus = (b) => {
+  if (b.proofPending) return "WAITING FOR PROOF";
+  return formatStatus(b.status);
+};
 
 /* ---------------- COMPONENT ---------------- */
 export default function ActiveBooking() {
@@ -45,7 +49,12 @@ const [hasSearched, setHasSearched] = useState(false);
 const handleSearch = () => {
   setHasSearched(true);
 };
-
+const ALLOWED_TRANSITIONS = {
+  BOOKING_PLACED: ["IN_TRANSIT"],
+  IN_TRANSIT: ["COMPLETED"],
+  WAITING_FOR_PROOF: [],
+  COMPLETED: []
+};
 
 const formatAddress = (addr, fallback) => {
   if (!addr) return fallback || "N/A";
@@ -183,17 +192,32 @@ const filteredBookings = activeBookings.filter((b) => {
 
 
   try {
+const currentStatus = currentBooking.status;
 
+if (
+  !ALLOWED_TRANSITIONS[currentStatus]?.includes(modalState.chosenStatus) &&
+  modalState.chosenStatus !== currentStatus
+) {
+  alert("Invalid status transition!");
+  return;
+}
     // 🔹 WHEN STATUS BECOMES IN_TRANSIT
     if (modalState.chosenStatus === "COMPLETED") {
+const driver = driversMap[currentBooking.driverId];
 
-  const driverPhone =
-    driversMap[currentBooking.driverId]?.phone;
+// 🔥 DRIVER LOAD CHECK
+if (!driver) {
+  alert("Driver data still loading. Please wait.");
+  return;
+}
 
-  if (!driverPhone) {
-    alert("Driver phone number missing!");
-    return; // ❌ STOP
-  }
+// 🔥 PHONE CHECK
+if (!driver.phone) {
+  alert("Driver phone number missing!");
+  return;
+}
+
+const driverPhone = driver.phone;
 
   // 🔹 create link
   const token = await createDriverUploadLink(modalState.bookingId);
@@ -218,56 +242,22 @@ const filteredBookings = activeBookings.filter((b) => {
   // OPTIONAL: delay (better UX)
  alert("WhatsApp open ho gaya....");
 }
- await updateDoc(doc(db, "bookings", modalState.bookingId), {
-      status: modalState.chosenStatus,
-    });
-    // WHEN COMPLETED (existing logic)
-    if (modalState.chosenStatus === "COMPLETED") {
-      if (currentBooking?.vehicleId) {
-        await updateDoc(
-          doc(db, "vehicles", currentBooking.vehicleId),
-          { status: "Available" }
-        );
-      }
-      //  DRIVER AVAILABLE 
-  if (currentBooking?.driverId) {
-    await updateDoc(
-      doc(db, "drivers", currentBooking.driverId),
-      { status: "Available" }
-    );
-  }
+const booking = currentBooking;
+ if (modalState.chosenStatus === "COMPLETED") {
 
-      // PAYMENT RELEASE TIMER
-  const paymentQuery = query(
-    collection(db, "payments"),
-    where("bookingId", "==", modalState.bookingId)
-  );
-
-  const paymentSnap = await getDocs(paymentQuery);
-
-  paymentSnap.forEach(async (p) => {
-    await updateDoc(doc(db, "payments", p.id), {
-      releaseAt: Timestamp.fromDate(
-        new Date(Date.now() + 5 * 60 * 60 * 1000)
-      )
-    });
+  // ❗ DO NOT COMPLETE HERE
+  await updateDoc(doc(db, "bookings", modalState.bookingId), {
+    status: "IN_TRANSIT",
+    proofPending: true,
   });
-try {
-      console.log("EMAIL SENDING 👉", currentBooking);
-  await fetch("http://localhost:5000/booking/completed", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      email: currentBooking.customerEmail,
-      bookingId: modalState.bookingId
-    })
-  });
-} catch (err) {
-  console.error("Completed email failed:", err);
 }
-    }
+ else {
+  await updateDoc(doc(db, "bookings", modalState.bookingId), {
+    status: modalState.chosenStatus,
+    proofPending: false,
+  });
+}
+   
 
     closeModal();
   } catch (err) {
@@ -350,7 +340,7 @@ try {
     <div className="flex justify-between items-start">
       <div className="flex flex-wrap items-center gap-2">
         <span className={`px-3 py-1 rounded-full text-sm font-semibold ${statusBadgeColor(b.status)}`}>
-          {formatStatus(b.status)}
+         {getDisplayStatus(b)}
         </span>
 
         <span className="text-gray-500 font-small">
@@ -473,28 +463,47 @@ try {
               Update Status – #{currentBooking.id}
             </h2>
 
-            {[
-              { label: "Booking Placed", value: "BOOKING_PLACED" },
-              { label: "In Transit", value: "IN_TRANSIT" },
-              { label: "Completed", value: "COMPLETED" },
-            ].map((s) => (
-              <div
-                key={s.value}
-                onClick={() =>
-                  setModalState((prev) => ({
-                    ...prev,
-                    chosenStatus: s.value,
-                  }))
-                }
-                className={`p-4 border rounded-xl cursor-pointer mb-3 ${
-                  modalState.chosenStatus === s.value
-                    ? "border-purple-600 bg-purple-50"
-                    : ""
-                }`}
-              >
-                {s.label}
-              </div>
-            ))}
+            {(() => {
+  const currentStatus = currentBooking.proofPending
+  ? "WAITING_FOR_PROOF"
+  : currentBooking.status;
+
+ const statusOptions = [
+  { label: "Booking Placed", value: "BOOKING_PLACED" },
+  { label: "In Transit", value: "IN_TRANSIT" },
+  { label: "Completed", value: "COMPLETED" },
+];
+
+  return statusOptions.map((s) => {
+  const isAllowed =
+    s.value === currentStatus ||
+    ALLOWED_TRANSITIONS[currentStatus]?.includes(s.value);
+
+  return (
+    <div
+      key={s.value}
+      onClick={() => {
+        if (!isAllowed) return; // ❌ block click
+        setModalState((prev) => ({
+          ...prev,
+          chosenStatus: s.value,
+        }));
+      }}
+      className={`p-4 border rounded-xl mb-3 ${
+        modalState.chosenStatus === s.value
+          ? "border-purple-600 bg-purple-50"
+          : ""
+      } ${
+        !isAllowed
+          ? "opacity-50 cursor-not-allowed bg-gray-100"
+          : "cursor-pointer"
+      }`}
+    >
+      {s.label}
+    </div>
+  );
+});
+})()}
 
             <div className="flex justify-end gap-3 mt-6">
               <button

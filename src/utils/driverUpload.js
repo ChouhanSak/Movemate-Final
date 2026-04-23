@@ -1,5 +1,5 @@
 import { addDoc, collection, Timestamp } from "firebase/firestore";
-import { db } from "../firebase";
+import { db } from "../Firebase";
 
 export const createDriverUploadLink = async (bookingId) => {
   const expiresAt = Timestamp.fromDate(

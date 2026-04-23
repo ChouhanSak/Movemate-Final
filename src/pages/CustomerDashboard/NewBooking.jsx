@@ -2,6 +2,7 @@ import React, { useState, useEffect,useRef } from "react";
 import { db } from "../../firebase";
 import { collection, addDoc, serverTimestamp, query, onSnapshot, where, getDocs } from "firebase/firestore";
 import { auth } from "../../firebase";
+import { orderBy } from "firebase/firestore";
 import { getCoordinates } from "../../utils/osmUtils";
 import { calculateDistance } from "../../utils/distanceUtils";
 import { doc, getDoc } from "firebase/firestore";
@@ -60,23 +61,6 @@ const [distance, setDistance] = useState(null);
 const [distanceLoading, setDistanceLoading] = useState(false);
 const [kycStatus, setKycStatus] = useState("");
 const [pickupQuery, setPickupQuery] = useState("");
-useEffect(() => {
-  const fetchSuggestions = async () => {
-    if (pickupQuery.length < 2) {
-      setPickupSuggestions([]);
-      return;
-    }
-
-    try {
-      const results = await searchAddress(pickupQuery);
-      setPickupSuggestions(results);
-    } catch (err) {
-      console.error("Search error:", err);
-    }
-  };
-
-  fetchSuggestions();
-}, [pickupQuery]);
 const [pickupSuggestions, setPickupSuggestions] = useState([]);
 const [dropQuery, setDropQuery] = useState("");
 const [showReviews, setShowReviews] = useState(false);
@@ -84,7 +68,27 @@ const [selectedAgencyForReview, setSelectedAgencyForReview] = useState(null);
 const [agencyReviews, setAgencyReviews] = useState([]);
 const [dropSuggestions, setDropSuggestions] = useState([]);
 const pickupRef = useRef(null);
-const dropRef = useRef(null);
+const hasCalculated = useRef(false);
+// INPUT VALIDATIONS (STEP 3)
+
+const debounce = (func, delay) => {
+  let timeout;
+  return (...args) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), delay);
+  };
+};
+const fetchSuggestions = async (query) => {
+  if (!query || query.length < 3) return; //  important
+
+  try {
+    const res = await searchAddress(query);
+    setPickupSuggestions(res);
+  } catch (e) {
+    console.error(e);
+  }
+};
+const debouncedFetch = useRef(debounce(fetchSuggestions, 800)).current;
 const handleCustomerNameChange = (e) => {
   const value = e.target.value;
   if (/^[a-zA-Z\s]*$/.test(value)) {
@@ -106,25 +110,15 @@ const handleWeightChange = (e) => {
 
 useEffect(() => {
   const handleClickOutside = (e) => {
-    if (
-      pickupRef.current &&
-      !pickupRef.current.contains(e.target)
-    ) {
-      setPickupSuggestions([]);
-    }
-
-    if (
-      dropRef.current &&
-      !dropRef.current.contains(e.target)
-    ) {
-      setDropSuggestions([]);
+    if (pickupRef.current && !pickupRef.current.contains(e.target)) {
+      setPickupSuggestions([]); //  yahi se box band hoga
     }
   };
 
- document.addEventListener("click", handleClickOutside);
-
+  document.addEventListener("mousedown", handleClickOutside);
+  
   return () => {
-    document.removeEventListener("click", handleClickOutside);
+    document.removeEventListener("mousedown", handleClickOutside);
   };
 }, []);
 
@@ -157,8 +151,53 @@ useEffect(() => {
     setDistance(null);
   }
 }, [step]);
+useEffect(() => {
+  if (step !== 4 || hasCalculated.current) return;
 
+  hasCalculated.current = true;
 
+  if (isSameAddress()) {
+    setDistance(3);
+    setDistanceLoading(false);
+    return;
+  }
+
+  const calcDistance = async () => {
+    try {
+      setDistanceLoading(true);
+
+      let start = await getCoordinates(`${city}, ${stateName}`);
+      let end = await getCoordinates(`${dropCity}, ${dropStateName}`);
+
+      let km = 0;
+
+      if (start && end) {
+        km = await calculateDistance(start, end);
+      }
+
+      const distanceValue = parseFloat(km);
+
+      // ✅ FINAL SAFE LINE
+      setDistance(distanceValue < 0.5 ? 3 : distanceValue || 5);
+
+    } catch (e) {
+      console.error("Distance error:", e);
+
+      // ✅ NEVER FAIL
+      setDistance(5);
+    } finally {
+      setDistanceLoading(false);
+    }
+  };
+
+  calcDistance();
+}, [step]);
+useEffect(() => {
+  if (step !== 4) {
+    hasCalculated.current = false;
+    setDistance(null);
+  }
+}, [step]);
   // STEP 2 - Agencies
 const [selectedAgency, setSelectedAgency] = useState(null);
 const [agencies, setAgencies] = useState([]);
@@ -229,102 +268,46 @@ const minDate = `${yyyy}-${mm}-${dd}`; // YYYY-MM-DD format
   return () => unsub();
 }, []);
 useEffect(() => {
-  const fetchDropSuggestions = async () => {
-    if (dropQuery.length < 2) {
-      setDropSuggestions([]);
-      return;
-    }
-
-    try {
-      const results = await searchAddress(dropQuery);
-      setDropSuggestions(results);
-    } catch (err) {
-      console.error("Drop search error:", err);
-    }
-  };
-
-  fetchDropSuggestions();
-}, [dropQuery]);
-useEffect(() => {
   const sortByDistance = async () => {
     if (!city || agencies.length === 0) {
-      setSortedAgencies([]);
+      setSortedAgencies(agencies);
       return;
     }
 
     try {
-    let userLoc = await getCoordinates(`${city}, ${stateName}`);
-
-if (!userLoc) {
-  console.warn("Invalid city");
-}
-
-      // 🔴 CITY VALIDATION
-     if (!userLoc) {
-  console.warn("Location not found, skipping distance");
-
-  // 🔥 ONLY FILTER BY STATE
-  let fallback = agencies.filter(a =>
-    (a.state || "").toLowerCase() === stateName.toLowerCase()
-  );
-
-  // 🔥 If state also wrong → show all
-  if (fallback.length === 0) {
-    fallback = agencies;
-  }
-
-  setSortedAgencies(fallback);
-  return;
-}
-
-      // ✅ STEP 1: SAME STATE FILTER
-    // ✅ STEP 1: TRY STATE FILTER
-let filteredAgencies = agencies.filter(a =>
-  (a.state || "").toLowerCase() === stateName.toLowerCase()
-);
-
-// ✅ STEP 2: FALLBACK TO CITY IF STATE FAILS
-if (filteredAgencies.length === 0) {
-  console.warn("State mismatch, falling back to city filter");
-
-  filteredAgencies = agencies.filter(a =>
-    (a.city || "").toLowerCase() === city.toLowerCase()
-  );
-}
-
+      const userLoc = await getCoordinates(`${city}, ${stateName}`);
+      const limitedAgencies = agencies.slice(0, 10);
       const agenciesWithDistance = [];
 
-      // ✅ STEP 2: DISTANCE ONLY FOR FILTERED
-for (const a of filteredAgencies) {
-        let agencyLoc;
+const uniqueCities = [...new Set(agencies.map(a => a.city))];
 
-        if (cityCache.current[a.city]) {
-          agencyLoc = cityCache.current[a.city];
-        } else {
-          agencyLoc = await getCoordinates(`${a.city}`);
-          cityCache.current[a.city] = agencyLoc;
-        }
+// STEP 1: fetch all cities ONCE
+for (const cityName of uniqueCities) {
+  if (!cityCache.current[cityName]) {
+    cityCache.current[cityName] = await getCoordinates(cityName);
+    await new Promise(res => setTimeout(res, 1200)); // only here
+  }
+}
 
-        let km = Infinity;
+// STEP 2: calculate distance without extra geocode calls
+for (const a of limitedAgencies) {
+  const agencyLoc = cityCache.current[a.city];
+  let km = Infinity;
 
-        if (userLoc && agencyLoc) {
-          await new Promise(res => setTimeout(res, 1200)); // rate limit safety
-          km = await calculateDistance(userLoc, agencyLoc);
-        }
+  if (userLoc && agencyLoc) {
+    km = await calculateDistance(userLoc, agencyLoc);
+  }
 
-        agenciesWithDistance.push({ ...a, distanceFromUser: km });
-      }
-
-      // ✅ STEP 3: SORT BY DISTANCE
+  agenciesWithDistance.push({ ...a, distanceFromUser: km });
+}
       agenciesWithDistance.sort(
         (a, b) => a.distanceFromUser - b.distanceFromUser
       );
 
       setSortedAgencies(agenciesWithDistance);
-
     } catch (err) {
       console.error("Sorting error:", err);
-      setSortedAgencies([]);
+      setSortedAgencies(agencies);
     }
   };
 
@@ -390,7 +373,10 @@ const handleConfirmBooking = async () => {
     alert("Please select an agency");
     return;
   }
-  
+  if (distance === null || distanceLoading) {
+  alert("Distance is still calculating, please wait");
+  return;
+}
 if (
   street.trim().toLowerCase() === dropStreet.trim().toLowerCase() &&
   city.trim().toLowerCase() === dropCity.trim().toLowerCase() &&
@@ -475,11 +461,14 @@ setAgreed(false);
     console.error("Error fetching reviews:", error);
   }
 };
-const filteredAgencies = sortedAgencies.filter(a =>
-  a.name.toLowerCase().includes(searchAgency.toLowerCase()) ||
-  a.city.toLowerCase().includes(searchAgency.toLowerCase()) ||
-  a.address.toLowerCase().includes(searchAgency.toLowerCase())
-);
+const filteredAgencies = sortedAgencies.filter(a => {
+  const userState = stateName.trim().toLowerCase();
+  const agencyState = (a.state || "").trim().toLowerCase();
+
+  if (!userState) return false;
+
+  return agencyState === userState;
+});
 if (!user) return <div>Loading...</div>;
   return (
     <div className="max-w-7xl mx-auto bg-white p-6 rounded shadow pb-20">
@@ -492,8 +481,8 @@ if (!user) return <div>Loading...</div>;
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
            {/* Pickup Address */}
-{/* Pickup Address */}
-<div className="relative" ref={pickupRef}>
+<div className="relative">
+  <div className="relative" ref={pickupRef}></div>
   <label className="block text-sm font-medium mb-1">Pickup Address</label>
 
   {/* Street / Area */}
@@ -502,60 +491,34 @@ if (!user) return <div>Loading...</div>;
     placeholder="Street / Area / Landmark"
     value={street}
     onChange={(e) => {
+      const val = e.target.value;
       setStreet(e.target.value);
-      
+      debouncedFetch(val); // triggers suggestions
     }}
   />
 
   {/* City */}
   <input
-  className="border px-3 py-2 rounded w-full mb-2"
-  placeholder="City"
-  value={city}
-  onChange={(e) => {
-    setCity(e.target.value);
-    setPickupQuery(e.target.value); // 🔥 THIS IS IMPORTANT
-  }}
-/>
+    className="border px-3 py-2 rounded w-full mb-2"
+    placeholder="City"
+    value={city}
+    onChange={(e) => setCity(e.target.value)} // now user can type
+  />
 
   {/* State */}
   <input
     className="border px-3 py-2 rounded w-full mb-2"
     placeholder="State"
     value={stateName}
-    onChange={(e) => setStateName(e.target.value)}
+    onChange={(e) => setStateName(e.target.value)} // now user can type
   />
 
-  {/* Suggestions dropdown */}
-  {pickupSuggestions.length > 0 && (
-    <div className="absolute top-full left-0 right-0 border rounded bg-white shadow max-h-48 overflow-y-auto z-50">
-      {pickupSuggestions.map((s, i) => (
-        <div
-          key={i}
-          className="px-3 py-2 hover:bg-purple-100 cursor-pointer text-sm"
-          onMouseDown={(e) => {
-  e.stopPropagation();
-
-  // ✅ SAFE SET (overwrite only if exists)
-  if (s.address.road) setStreet(s.address.road);
-  if (s.address.city || s.address.town || s.address.village) {
-    setCity(s.address.city || s.address.town || s.address.village);
-  }
-  if (s.address.state) setStateName(s.address.state);
-
-  setPickupQuery("");
-  setPickupSuggestions([]);
-}}
-        >
-          {s.label}
-        </div>
-      ))}
-    </div>
-  )}
+  
 </div>
 
 {/* Drop Address */}
-<div className="relative" ref={dropRef}>
+<div className="relative">
+  <div className="relative" ref={pickupRef}></div>
   <label className="block text-sm font-medium mb-1">Delivery Address</label>
 
   {/* Street / Area */}
@@ -586,14 +549,13 @@ if (!user) return <div>Loading...</div>;
   />
 
   {/* Suggestions dropdown */}
- {dropSuggestions.length > 0 && (
+  {/* {dropSuggestions.length > 0 && (
     <div className="absolute top-full left-0 right-0 border rounded bg-white shadow max-h-48 overflow-y-auto z-50">
       {dropSuggestions.map((s, i) => (
         <div
           key={i}
           className="px-3 py-2 hover:bg-purple-100 cursor-pointer text-sm"
-          onMouseDown={(e) => {
-             e.stopPropagation();
+          onClick={() => {
             setDropStreet(s.address.road || "");
             setDropCity(s.address.city || s.address.town || "");
             setDropStateName(s.address.state || "");
@@ -605,7 +567,7 @@ if (!user) return <div>Loading...</div>;
         </div>
       ))}
     </div>
-  )} 
+  )} */}
 </div>
             <div>
               <label className="block text-sm font-medium mb-1">6-digit Pincode</label>

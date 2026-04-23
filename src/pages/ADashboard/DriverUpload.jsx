@@ -7,9 +7,10 @@ import {
   serverTimestamp,
   arrayUnion,
 } from "firebase/firestore";
+import { collection, query, where, getDocs, Timestamp } from "firebase/firestore";
 import { db } from "../../firebase";
 import { useEffect, useState, useRef } from "react";
-
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 export default function DriverUpload() {
   const { token } = useParams();
 
@@ -69,17 +70,80 @@ export default function DriverUpload() {
         imageUrls.push(url);
       }
 
-      for (const url of imageUrls) {
-        await updateDoc(doc(db, "bookings", bookingId), {
-          driverPhotos: arrayUnion(url),
-        });
-      }
+     await updateDoc(doc(db, "bookings", bookingId), {
+  driverPhotos: arrayUnion(...imageUrls),
+});
 
       await updateDoc(doc(db, "driver_upload_links", token), {
         used: true,
         uploadedAt: serverTimestamp(),
       });
+     // 🔥 GET booking data first
+const bookingSnap = await getDoc(doc(db, "bookings", bookingId));
+const bookingData = bookingSnap.data();
 
+// after bookingData fetch
+
+if (bookingData?.status === "COMPLETED") return;
+
+await updateDoc(doc(db, "bookings", bookingId), {
+  status: "COMPLETED",
+  proofPending: false,
+  completedAt: serverTimestamp(),
+});
+// 2️⃣ Then send email
+  try {
+    if (bookingData?.customerEmail) {
+      await fetch("http://localhost:5000/booking/completed", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: bookingData.customerEmail,
+          bookingId: bookingId
+        })
+      });
+    } else {
+      console.warn("No email found");
+    }
+  } catch (err) {
+    console.error("Email failed:", err);
+  }
+// 2. FREE RESOURCES
+if (bookingData?.vehicleId) {
+  await updateDoc(doc(db, "vehicles", bookingData.vehicleId), {
+    status: "Available"
+  });
+}
+
+if (bookingData?.driverId) {
+  await updateDoc(doc(db, "drivers", bookingData.driverId), {
+    status: "Available"
+  });
+}
+
+// 3. PAYMENT TIMER (LAST)
+const paymentQuery = query(
+  collection(db, "payments"),
+  where("bookingId", "==", bookingId)
+);
+
+const paymentSnap = await getDocs(paymentQuery);
+
+paymentSnap.forEach(async (p) => {
+  const paymentData = p.data();
+
+  if (!paymentData.releaseAt) {
+    await updateDoc(doc(db, "payments", p.id), {
+      releaseAt: Timestamp.fromDate(
+        new Date(Date.now() + 5 * 60 * 60 * 1000)
+      ),
+      paymentStatus: "holding"
+    });
+  }
+});
+      
       setSuccess(true);
       stopCamera();
     } catch (err) {
@@ -88,6 +152,7 @@ export default function DriverUpload() {
     } finally {
       setUploading(false);
     }
+
   };
 
   /* ---------------- CAMERA FUNCTIONS ---------------- */

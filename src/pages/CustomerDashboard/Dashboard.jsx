@@ -2,6 +2,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import smallTruck from "../../assets/smallTruck.png";
+import { useLocation } from "react-router-dom";
 import {
   Box,
   Truck,
@@ -40,7 +41,7 @@ import {
   onSnapshot,
   doc,
 } from "firebase/firestore";
-import { getDoc, updateDoc } from "firebase/firestore";
+import { getDoc, updateDoc,deleteDoc  } from "firebase/firestore";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -53,6 +54,8 @@ export default function Dashboard() {
 
 const [recentActivities, setRecentActivities] = useState([]);
 
+const [accountStatus, setAccountStatus] = useState("");
+const [blockReason, setBlockReason] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAllBookings, setShowAllBookings] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -60,6 +63,12 @@ const [recentActivities, setRecentActivities] = useState([]);
   const [userData, setUserData] = useState({ fullName: "", email: "" });
   const [recentBooking, setRecentBooking] = useState(null);
   // const [recentActivities, setRecentActivities] = useState([]);
+  const location = useLocation();
+  useEffect(() => {
+  if (location.state?.page === "all") {
+    setActivePage("all");
+  }
+}, [location.state]);
   const navigate = useNavigate();
   const [kycStatus, setKycStatus] = useState("");
   const [notifications, setNotifications] = useState([]);
@@ -102,21 +111,44 @@ const [avgDelivery, setAvgDelivery] = useState("—");
 
 // }, []);
 useEffect(() => {
+  const savedPage = localStorage.getItem("activePage");
+
+  if (savedPage) {
+    setActivePage(savedPage);
+  }
+}, []);
+useEffect(() => {
+  if (location.state?.page === "all") {
+    setActivePage("all");
+
+    // clear state so refresh pe repeat na ho
+    window.history.replaceState({}, document.title);
+  }
+}, [location.state]);
+useEffect(() => {
   let timer;
 
   const unsubscribe = onAuthStateChanged(auth, (user) => {
     if (!user) return;
 
     timer = setTimeout(() => {
-
       const lastShown = Number(localStorage.getItem("feedbackShown"));
+      const skipCount = Number(localStorage.getItem("feedbackSkipCount")) || 0;
+      const submitted = localStorage.getItem("feedbackSubmitted");
 
+      // ❌ submitted → never show
+      if (submitted === "true") return;
+
+      // ❌ skipped 3 times → never show
+      if (skipCount >= 3) return;
+
+      // ✅ show only after 24 hrs
       if (!lastShown || Date.now() - lastShown > 86400000) {
         setShowFeedback(true);
         localStorage.setItem("feedbackShown", Date.now());
       }
 
-    }, 240000); // 4 minutes 
+    }, 240000); // 4 min
   });
 
   return () => {
@@ -182,7 +214,8 @@ useEffect(() => {
   const data = docSnap.data();         // get all data once
   const kycData = data.kyc;           
   setKycStatus(kycData?.status || "");
-
+  setAccountStatus(data.status || "ACTIVE");
+   setBlockReason(data.blockReason || "");
   fullName = data.fullName || email.split("@")[0] || "User";
 } else if (user.displayName) {
   fullName = user.displayName;
@@ -370,6 +403,7 @@ if (deliveredCount > 0) {
   });
 
   if (result.isConfirmed) {
+    localStorage.removeItem("activePage");
     await signOut(auth);
 
     await Swal.fire({
@@ -412,6 +446,19 @@ if (deliveredCount > 0) {
 
   const SidebarItem = ({ icon, label, pageKey }) => {
   const handleClick = () => {
+     //  BLOCKED USER
+  if (accountStatus?.toUpperCase() === "BLOCKED" && pageKey === "newBooking") {
+    Swal.fire({
+      icon: "error",
+      title: "Account Blocked",
+      html: `
+      <p>Your account is blocked.</p>
+      <p><b>Reason:</b> ${blockReason || "Not specified"}</p>
+    `,
+    confirmButtonColor: "#7c3aed",
+  });
+  return;
+}
     if (pageKey === "newBooking" && kycStatus === "MANUAL_REVIEW") {
     Swal.fire({
       icon: "warning",
@@ -425,6 +472,7 @@ if (deliveredCount > 0) {
       handleLogout();        //  logout action
     } else {
       setActivePage(pageKey); //  normal pages
+      localStorage.setItem("activePage", pageKey);
     }
   };
 
@@ -544,6 +592,7 @@ if (deliveredCount > 0) {
               if (!n.read) {
                 await updateDoc(doc(db, "notifications", n.id), { read: true });
               }
+             
             }}
           >
            {n.title && <div className="font-medium">{n.title}</div>}
@@ -575,24 +624,6 @@ if (deliveredCount > 0) {
   <p className="font-medium text-gray-900">{userData.fullName}</p>
   <p className="text-sm text-gray-500 -mt-1">{userData.email}</p>
 </div>
-
-
-      {profileDropdownOpen && (
-        <div className="absolute right-0 top-14 bg-white shadow-lg border rounded-lg w-44 z-50 p-2">
-          <button className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
-            Manage Profile
-          </button>
-          <button className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded">
-            Recent Activity
-          </button>
-          <button
-            onClick={handleLogout}
-            className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded text-red-600"
-          >
-            Logout
-          </button>
-        </div>
-      )}
     </div>
   </div>
 </div>
@@ -601,7 +632,11 @@ if (deliveredCount > 0) {
     ⚠ Your account is under verification. You cannot create bookings yet.
   </div>
 )}
-
+{accountStatus?.toUpperCase() === "BLOCKED" && (
+  <div className="mb-4 p-4 rounded-lg bg-red-100 border border-red-400 text-red-800">
+    🚫 Your account is blocked. You cannot create bookings.
+  </div>
+)}
         {/* ----------------- HEADER ----------------- */}
         {activePage === "overview" ? (
           <header className="mt-6">
@@ -744,18 +779,35 @@ if (deliveredCount > 0) {
 
         {/* ----------------- DYNAMIC PAGES ----------------- */}
         {activePage === "overview" && <div> {/* Put overview content here if needed */} </div>}
-        {activePage === "newBooking" && <NewBooking />}
-        {activePage === "track" && <TrackShipment />}
+        {activePage === "newBooking" && <NewBooking key={accountStatus} />}
+        {activePage === "track" && <TrackShipment fromSidebar={true} />}
         {activePage === "all" && <AllBookings />}
        {activePage === "settings" && <CustomerSettings userData={userData} />}
 
         {/* ----------------- FOOTER ----------------- */}
         <Footer />
       {showFeedback && (
-  <FeedbackPopup 
-    onClose={() => setShowFeedback(false)} 
-    userType="customer"
-  />
+ <FeedbackPopup 
+  onClose={(type) => {
+    setShowFeedback(false);
+
+    // ✅ mark shown ONLY after interaction
+    localStorage.setItem("feedbackShown", Date.now());
+
+    if (type === "submitted") {
+      localStorage.setItem("feedbackSubmitted", "true");
+      localStorage.removeItem("feedbackSkipCount"); // optional clean
+      return;
+    }
+
+    if (type === "not_now") {
+      let count = Number(localStorage.getItem("feedbackSkipCount")) || 0;
+      count++;
+      localStorage.setItem("feedbackSkipCount", count);
+    }
+  }} 
+  userType="customer"
+/>
 )}
       </div>
     </div>

@@ -4,7 +4,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { useEffect, useState } from "react";
-import { auth, db } from "../../firebase";
+import { auth, db } from "../../Firebase";
 import {
   EmailAuthProvider,
   reauthenticateWithCredential,

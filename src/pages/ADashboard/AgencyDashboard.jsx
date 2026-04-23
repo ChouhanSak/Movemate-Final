@@ -75,7 +75,20 @@ function isPaymentExpired(priceSetAt) {
   const priceTime = priceSetAt.toDate().getTime();
   return now - priceTime > expiryTime;
 }
+function formatIndianCurrency(amount) {
+  if (!amount) return "0";
+
+  if (amount >= 10000000) {
+    return (amount / 10000000).toFixed(1).replace(".0", "") + " Cr";
+  } else if (amount >= 100000) {
+    return (amount / 100000).toFixed(1).replace(".0", "") + " L";
+  } else {
+    return amount.toLocaleString("en-IN");
+  }
+}
 export default function AgencyDashboard() {
+  const [accountStatus, setAccountStatus] = useState("Active");
+const [blockReason, setBlockReason] = useState("");
 const [activityLoaded, setActivityLoaded] = useState(false);
 const [bookingRequests, setBookingRequests] = useState([]);
 const [agency, setAgency] = useState(null);
@@ -105,6 +118,44 @@ const [monthlyStats, setMonthlyStats] = useState({
   earnings: 0,
   successRate: 0
 });
+useEffect(() => {
+  if (!currentUser) return;
+
+  const q = query(
+    collection(db, "payments"),
+    where("agencyId", "==", currentUser.uid),
+    where("paymentStatus", "==", "released")
+  );
+
+  const unsubscribe = onSnapshot(q, (snap) => {
+    let totalEarnings = 0;
+
+    const now = new Date();
+    const month = now.getMonth();
+    const year = now.getFullYear();
+
+    snap.docs.forEach(doc => {
+      const p = doc.data();
+
+      if (!p.releasedAt) return;
+
+      const date = p.releasedAt.toDate();
+
+      //Only THIS MONTH
+      if (date.getMonth() === month && date.getFullYear() === year) {
+        totalEarnings += p.amount || 0;
+      }
+    });
+
+    //  sirf earnings update karna
+    setMonthlyStats(prev => ({
+      ...prev,
+      earnings: totalEarnings
+    }));
+  });
+
+  return () => unsubscribe();
+}, [currentUser]);
 useEffect(() => {
   const unsub = onAuthStateChanged(auth, (user) => {
     setCurrentUser(user);
@@ -200,9 +251,6 @@ useEffect(() => {
           text: "Your account has been blocked. Contact support for more info.",
           allowOutsideClick: false,
         });
-
-        await signOut(auth);
-        navigate("/select-user");
       }
     }
   };
@@ -255,24 +303,22 @@ useEffect(() => {
 
   return () => unsub();
 }, [currentUser]);
-
 useEffect(() => {
-
   if (!currentUser) return;
 
   const timer = setTimeout(() => {
-
-    const lastShown = Number(localStorage.getItem("agencyFeedbackShown"));
-
-    if (!lastShown || Date.now() - lastShown > 86400000) {
-      setShowFeedback(true);
-      localStorage.setItem("agencyFeedbackShown", Date.now());
-    }
-
-  }, 240000);
+    const lastShown = Number(localStorage.getItem("agencyFeedbackShown") || 0);
+    const skipCount = Number(localStorage.getItem("agencyFeedbackSkipCount")) || 0;
+    const submitted = localStorage.getItem("agencyFeedbackSubmitted");
+    if (submitted === "true") return;
+    if (skipCount >= 3) return;
+   if (!lastShown || Date.now() - lastShown > 86400000) {
+  setShowFeedback(true);
+  localStorage.setItem("agencyFeedbackShown", Date.now());
+}
+  }, 240000); // 4 min
 
   return () => clearTimeout(timer);
-
 }, [currentUser]);
 // useEffect(() => {
 
@@ -317,7 +363,11 @@ useEffect(() => {
     });
 
     const successRate = total === 0 ? 0 : Math.round((success / total) * 100);
-    setMonthlyStats({ deliveries, earnings, successRate });
+    setMonthlyStats(prev => ({
+  ...prev,
+  deliveries,
+  successRate
+}));
   });
 
   return () => unsubscribe();
@@ -367,7 +417,7 @@ const handleReject = async (bookingId) => {
 
     // 2️⃣ Send notification to customer
     await addDoc(collection(db, "notifications"), {
-  userId: booking.customerId,     // 👈 only customer will receive
+  userId: booking.customerId,     //  only customer will receive
   message: "❌ Your booking has been rejected by the agency",
   bookingId,
   read: false,
@@ -386,13 +436,13 @@ const handleReject = async (bookingId) => {
 let unsubscribeStats = null;
 let unsubscribeFleet = null;
 
-  useEffect(() => {
+  useEffect(() =>{
   let unsubscribeBookings = null;
   let unsubNotif = null; 
   const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
     if (!user) {
-      window.location.href = "/login";
-      return;
+      // window.location.href = "/login";
+      // return;
     }
 
     try {
@@ -407,7 +457,10 @@ let unsubscribeFleet = null;
           averageRating: data.averageRating || 0, // add this
           ratingCount: data.ratingCount || 0, 
         });
-      }
+        setAccountStatus(data.status || "Active");
+         setBlockReason(data.blockReason || "");
+}
+      
       // ATTACH NOTIFICATION LISTENER HERE
 const notifQuery = query(
   collection(db, "notifications"),
@@ -506,10 +559,9 @@ const fleetQuery = query(
   if (unsubscribeStats) unsubscribeStats();
 if (unsubscribeFleet) unsubscribeFleet();
 
-};
+ }; []}); 
 
-}, []);
-if (!authReady) {
+ if (!authReady) {
   return (
     <div className="min-h-screen flex items-center justify-center">
       <p className="text-lg font-semibold">Loading...</p>
@@ -653,38 +705,46 @@ Manage Driver
         </div>
         
           <div
-            className="flex items-center gap-3 cursor-pointer hover:text-red-600"
-            onClick={() => {
-  Swal.fire({
-    title: "Logout?",
-    text: "Are you sure you want to logout?",
-    icon: "warning",
-    showCancelButton: true,
-    confirmButtonColor: "#7c3aed",
-    cancelButtonColor: "#d33",
-    confirmButtonText: "Yes, Logout",
-  }).then((result) => {
+  className="flex items-center gap-3 cursor-pointer hover:text-red-600"
+  onClick={async () => {
+    // 1️⃣ Confirm with user before logout
+    const result = await Swal.fire({
+      title: "Logout?",
+      text: "Are you sure you want to logout?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#7c3aed",
+      cancelButtonColor: "#d33",
+      confirmButtonText: "Yes, Logout",
+      cancelButtonText: "Cancel",
+    });
+
     if (result.isConfirmed) {
-      // await signOut(auth);
+      try {
+        // 2️⃣ Sign out from Firebase
+        await signOut(auth);
 
-      Swal.fire({
-        icon: "success",
-        title: "Logged out",
-        text: "You have been logged out successfully",
-        timer: 1500,
-        showConfirmButton: false,
-      });
-
-      setTimeout(() => {
-        navigate("/select-user"); // SELECT USER PAGE
-      }, 1500);
+        // 3️⃣ Show success popup
+        Swal.fire({
+          icon: "success",
+          title: "Logged out",
+          text: "You have been logged out successfully",
+          timer: 1500,
+          showConfirmButton: false,
+        }).then(() => {
+          // 4️⃣ Redirect to select-user page after popup
+          navigate("/select-user", { replace: true });
+        });
+      } catch (err) {
+        console.error("Logout error:", err);
+        Swal.fire("Error", "Could not log out. Try again.", "error");
+      }
     }
-  });
-}}
-          >
-            <LogOut className="w-5 h-5" />
-            Logout
-          </div>
+  }}
+>
+  <LogOut className="w-5 h-5" />
+  Logout
+</div>
         </div>
       </div>
 
@@ -799,7 +859,11 @@ Manage Driver
     You cannot accept bookings until verification is complete.
   </div>
 )}
-
+ {accountStatus?.toUpperCase() === "BLOCKED" && (
+  <div className="mb-4 p-4 rounded-lg bg-red-100 border border-red-400 text-red-800">
+    ❌ Your account has been blocked. {blockReason || "Contact support for more info."}
+  </div>
+)}
         {/* ---------------- Page Content ---------------- */}
         {activePage === "overview" && (
           <>
@@ -888,7 +952,7 @@ Manage Driver
                 <p className="text-lg">Deliveries</p>
                 <p className="text-lg text-right">{monthlyStats.deliveries} trips</p>
                 <p className="text-lg">Earnings</p>
-                <p className="text-lg text-right">₹{0}</p>
+                <p className="text-lg text-right">₹{formatIndianCurrency(monthlyStats.earnings)}</p>
                 <p className="text-lg">Avg. Rating</p>
                 <p className="text-lg text-right">{agency?.averageRating?.toFixed(1)} ⭐</p>
                 <p className="text-lg">Success Rate</p>
@@ -902,6 +966,7 @@ Manage Driver
   <BookingRequests
     bookingRequests={bookingRequests}
     kycStatus={kycStatus}
+    isBlocked={accountStatus === "Blocked"}
     setSelectedBooking={setSelectedBooking}
     setShowDetails={setShowDetails}
     setAssignBooking={setAssignBooking}
@@ -940,8 +1005,20 @@ Manage Driver
   }}
 />
 {showFeedback && (
-  <FeedbackPopup 
-  onClose={() => setShowFeedback(false)} 
+ <FeedbackPopup 
+  onClose={(type) => {
+  setShowFeedback(false);
+  if (type === "submitted") {
+    localStorage.setItem("agencyFeedbackSubmitted", "true");
+    localStorage.removeItem("agencyFeedbackSkipCount");
+    return;
+  }
+  if (type === "not_now") {
+    let count = Number(localStorage.getItem("agencyFeedbackSkipCount")) || 0;
+    count++;
+    localStorage.setItem("agencyFeedbackSkipCount", count);
+  }
+}}
   userType="agency"
 />
 )}

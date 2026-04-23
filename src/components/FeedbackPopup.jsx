@@ -22,8 +22,7 @@ await addDoc(collection(db, "feedback"), {
     setComment("");
 
     // close popup
-    onClose();
-
+onClose("submitted");
     // show success message
     alert("✅ Thanks for your feedback!");
 
@@ -74,7 +73,7 @@ await addDoc(collection(db, "feedback"), {
             style={{...notNowBtn, transition:"0.15s"}}
             onMouseDown={(e)=>e.currentTarget.style.transform="scale(0.95)"}
             onMouseUp={(e)=>e.currentTarget.style.transform="scale(1)"}
-            onClick={onClose}
+           onClick={() => onClose("not_now")}
             >
             Not Now
             </button>       

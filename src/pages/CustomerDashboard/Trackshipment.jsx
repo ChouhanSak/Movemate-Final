@@ -6,13 +6,29 @@ import {
   getDocs,
   updateDoc
 } from "firebase/firestore";
-
+import { useLocation, useNavigate } from "react-router-dom";
 import React, { useState } from "react";
 import { CheckCircle, Clock, Truck } from "lucide-react";
-import { db } from "../../Firebase";
+import { db } from "../../firebase";
 import { runTransaction } from "firebase/firestore";
-export default function TrackShipment({ onBack }) {
-  const [bookingId, setBookingId] = useState("");
+export default function TrackShipment({ onBack, fromSidebar = false}) {
+  const location = useLocation();
+const navigate = useNavigate();
+const handleBack = () => {
+  if (location.state?.from === "all-bookings") {
+    navigate("/customer-dashboard", {
+      state: { page: "all" }
+    });
+  } else {
+    navigate("/customer-dashboard"); // fallback (overview)
+  }
+};
+const queryParams = new URLSearchParams(location.search);
+const bookingIdFromURL = queryParams.get("bookingId");
+const [bookingId, setBookingId] = useState(bookingIdFromURL || "");
+  const [ratingLoading, setRatingLoading] = useState(false);
+const [disputeLoading, setDisputeLoading] = useState(false);
+  
   const [data, setData] = useState(null);
   const [rating, setRating] = useState(0);
   const [hover, setHover] = useState(0);
@@ -250,10 +266,14 @@ const addRating = async (bookingId, rating, comment) => {
 
       const booking = docSnap.data();
       console.log("STATUS FROM FIRESTORE:", booking.status);
-      setData({
-        status: booking.status,
-        timeline: getTimelineFromStatus(booking.status),
-      });
+     setData({
+  status: booking.status,
+  timeline: getTimelineFromStatus(booking.status),
+  completedAt: booking.completedAt
+    ? booking.completedAt.toDate()
+    : null,
+    canRaiseDispute: booking.canRaiseDispute
+});
       const alreadyRated = await checkIfAlreadyRated(bookingId);
       setSubmitted(alreadyRated);
 
@@ -288,8 +308,18 @@ const addRating = async (bookingId, rating, comment) => {
     return alert("You have already rated this booking.");
   }
 
-  await addRating(bookingId, rating, comment);
-  setSubmitted(true);
+  try {
+    setRatingLoading(true); 
+
+    await addRating(bookingId, rating, comment);
+
+    setSubmitted(true);
+  } catch (err) {
+    console.error(err);
+    alert("Rating failed");
+  } finally {
+    setRatingLoading(false);
+  }
 };
 const handleDisputeFileChange = (e) => {
   const files = Array.from(e.target.files);
@@ -314,6 +344,7 @@ const handleDisputeFileChange = (e) => {
   }
 
   try {
+    setDisputeLoading(true);
     // Upload images to Cloudinary
     console.log("📁 Files before upload:", disputeFiles);
     const uploadedImages = [];
@@ -341,10 +372,24 @@ const handleDisputeFileChange = (e) => {
     console.error(error);
     alert("Dispute submission failed");
   }
+   finally {
+    setDisputeLoading(false); 
+  }
 };
+
+  
 
   return (
     <div className="bg-white p-6 shadow-lg rounded-xl mt-6 w-full max-w-3xl mx-auto">
+      {!fromSidebar && (
+        <button
+          onClick={handleBack}
+          className="mb-4 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+        >
+          ← Back
+        </button>
+      )}
+
       {/* Title */}
       <h2 className="text-3xl font-bold mb-6 flex items-center gap-3">
         <Truck className="text-blue-600" /> Track Shipment
@@ -403,7 +448,12 @@ const handleDisputeFileChange = (e) => {
                 "Pending"}
             </p>
           </div>
-
+          {/* ✅ Completed Date (ADD HERE) */}
+{data.status === "COMPLETED" && data.completedAt && (
+  <div className="mt-3 text-green-700 font-medium">
+    ✅ Completed At: {data.completedAt.toLocaleString()}
+  </div>
+)}
           {/* Rating Section */}
 {data.status === "COMPLETED" && (
   <div className="bg-yellow-50 border border-yellow-200 p-6 rounded-xl mt-8">
@@ -444,11 +494,14 @@ const handleDisputeFileChange = (e) => {
 
         {rating > 0 && (
           <button
-            onClick={handleSubmitRating}
-            className="mt-4 bg-green-600 text-white px-6 py-3 rounded-lg"
-          >
-            Submit Rating
-          </button>
+  onClick={handleSubmitRating}
+  disabled={ratingLoading}
+  className={`mt-4 px-6 py-3 rounded-lg text-white ${
+    ratingLoading ? "bg-gray-400 cursor-not-allowed" : "bg-green-600"
+  }`}
+>
+  {ratingLoading ? "Submitting..." : "Submit Rating"}
+</button>
         )}
       </>
     )}
@@ -466,6 +519,11 @@ const handleDisputeFileChange = (e) => {
               <h3 className="text-2xl font-semibold flex items-center gap-2 text-red-600">
                 ⚠️ Raise a Dispute
               </h3>
+              {!data.canRaiseDispute && (
+  <p className="text-red-600 font-medium mb-3">
+    ⚠️ Dispute is disabled because you confirmed delivery without uploading photos.
+  </p>
+)}
               <p className="text-gray-600 mb-5">
                 If there is any issue with your delivery, you can upload a photo
                 and describe the defect.
@@ -480,7 +538,12 @@ const handleDisputeFileChange = (e) => {
 
  <button
   onClick={openCamera}
-  className="bg-gray-200 hover:bg-gray-300 p-3 rounded-full"
+  disabled={!data.canRaiseDispute}
+  className={`p-3 rounded-full ${
+    data.canRaiseDispute
+      ? "bg-gray-200 hover:bg-gray-300"
+      : "bg-gray-300 cursor-not-allowed"
+  }`}
 >
   📷
 </button>
@@ -501,14 +564,16 @@ const handleDisputeFileChange = (e) => {
   id="dispute-upload"
   onChange={handleDisputeFileChange}
   className="hidden"
+  disabled={!data.canRaiseDispute}
 />
 
                   <textarea
-                    placeholder="Describe the defect or issue"
-                    value={disputeDescription}
-                    onChange={(e) => setDisputeDescription(e.target.value)}
-                    className="border p-2 rounded-lg mt-2 w-full h-24 resize-none"
-                  />
+  disabled={!data.canRaiseDispute}
+  placeholder="Describe the defect or issue"
+  value={disputeDescription}
+  onChange={(e) => setDisputeDescription(e.target.value)}
+  className="border p-2 rounded-lg mt-2 w-full h-24 resize-none"
+/>
                  {disputeFiles.length > 0 && (
   <div className="grid grid-cols-3 gap-3 mt-3">
     {disputeFiles.map((file, index) => (
@@ -531,11 +596,21 @@ const handleDisputeFileChange = (e) => {
   </div>
 )}
                   <button
-                    onClick={handleSubmitDispute}
-                    className="mt-3 bg-red-600 text-white px-6 py-3 rounded-lg"
-                  >
-                    Submit Dispute
-                  </button>
+  onClick={() => {
+    if (!data.canRaiseDispute) {
+      alert("You cannot raise a dispute because you confirmed delivery without uploading proof photos.");
+      return;
+    }
+
+    handleSubmitDispute();
+  }}
+  disabled={disputeLoading}
+  className={`mt-3 px-6 py-3 rounded-lg text-white ${
+    disputeLoading ? "bg-gray-400" : "bg-red-600"
+  }`}
+>
+  {disputeLoading ? "Submitting..." : "Submit Dispute"}
+</button>
                 </div>
               )}
 

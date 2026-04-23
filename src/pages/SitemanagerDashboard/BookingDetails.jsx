@@ -1,5 +1,5 @@
 import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "../../Firebase";
+import { db } from "../../firebase";
 import { useEffect, useState } from "react";
 import { X, CalendarCheck } from "lucide-react";
 

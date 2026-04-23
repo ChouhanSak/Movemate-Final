@@ -27,7 +27,3 @@ backend-kyc/venv/
 __pycache__/
 node_modules/
 .env
-serviceAccountKey.json
-*.zip
-node_modules
-.env

@@ -215,6 +215,184 @@ const [showNotifications, setShowNotifications] = useState(false);
 const hasLoadedDisputes = React.useRef(false);
 const hasLoadedCustomers = React.useRef(false);
 const hasLoadedAgencies = React.useRef(false);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "disputes"), (snapshot) => {
+
+    let pendingCount = 0;
+
+    snapshot.forEach(doc => {
+      const status = (doc.data().status || "").toUpperCase();
+
+      if (
+        status !== "APPROVED" &&
+        status !== "REJECTED" &&
+        status !== "AI_REVIEWED"
+      ) {
+        pendingCount++;
+      }
+    });
+
+    setStats(prev => ({
+  ...prev,
+  pendingDisputes: pendingCount
+}));
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "disputes"), (snapshot) => {
+
+    let approvedCount = 0;
+
+    snapshot.forEach(doc => {
+      const status = (doc.data().status || "").toUpperCase();
+
+      if (status === "APPROVED") {
+        approvedCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      approvedDisputes: approvedCount
+    }));
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "bookings"), (snap) => {
+
+    let activeCount = 0;
+    let totalCount = snap.size;
+
+    snap.forEach(doc => {
+      const status = (doc.data().status || "").toUpperCase();
+
+      if (
+        status === "BOOKING_PLACED" ||
+        status === "IN_TRANSIT"
+      ) {
+        activeCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      activeBookings: activeCount,
+      totalBookings: totalCount
+    }));
+
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "payments"), (snap) => {
+    let holdingCount = 0;
+    let holdingAmount = 0;
+
+    snap.forEach(doc => {
+      const data = doc.data();
+      const paymentStatus = (data.paymentStatus || "").toUpperCase();
+
+      if (paymentStatus === "HOLDING") {
+        holdingCount++;
+
+        if (data.amount) {
+          holdingAmount += data.amount;
+        }
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingPayments: holdingCount,
+      totalHolding: Math.round(holdingAmount)
+    }));
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "payments"), (snap) => {
+
+    let releasedAmount = 0;
+    let releasedCount = 0;
+
+    const today = new Date();
+    const todayDate = today.toDateString();
+
+    snap.forEach(doc => {
+      const data = doc.data();
+
+      if (data.releaseAt) {
+        const releaseDate = data.releaseAt.toDate().toDateString();
+
+        if (releaseDate === todayDate) {
+          releasedCount++;
+
+          if (data.amount) {
+            releasedAmount += data.amount;
+          }
+        }
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      releasedToday: Math.round(releasedAmount),
+      releasedCount: releasedCount
+    }));
+  });
+
+  return () => unsub();
+}, []);
+
+useEffect(() => {
+  let customerCount = 0;
+  let agencyCount = 0;
+
+  const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
+    customerCount = 0;
+
+    snap.forEach(doc => {
+      const status = (doc.data()?.kyc?.status || "").toUpperCase();
+
+      if (status === "MANUAL_REVIEW") {
+        customerCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingKYC: customerCount + agencyCount
+    }));
+  });
+
+  const unsubAgencies = onSnapshot(collection(db, "agencies"), (snap) => {
+    agencyCount = 0;
+
+    snap.forEach(doc => {
+      const status = (doc.data()?.kyc?.status || "").toUpperCase();
+
+      if (status === "MANUAL_REVIEW") {
+        agencyCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingKYC: customerCount + agencyCount
+    }));
+  });
+
+  return () => {
+    unsubCustomers();
+    unsubAgencies();
+  };
+}, []);
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -259,7 +437,8 @@ useEffect(() => {
   const [stats, setStats] = useState({
   pendingKYC: 0,
   activeBookings: 0,
-  disputes: 0,
+  pendingDisputes: 0,
+  approvedDisputes: 0,
   pendingPayments: 0,
   totalHolding: 0,
   releasedToday: 0,
@@ -281,10 +460,15 @@ useEffect(() => {
 
   const unsub = onSnapshot(q, (snapshot) => {
 
-    const list = snapshot.docs.map(docSnap => ({
-      id: docSnap.id,
-      ...docSnap.data()
-    }));
+   const list = snapshot.docs
+  .map(docSnap => ({
+    id: docSnap.id,
+    ...docSnap.data()
+  }))
+  .sort((a, b) => {
+    if (!a.createdAt || !b.createdAt) return 0;
+    return b.createdAt.toDate() - a.createdAt.toDate(); // 🔥 latest first
+  });
 
     setNotifications(list);
     setUnreadCount(list.filter(n => !n.read).length);
@@ -400,7 +584,7 @@ useEffect(() => {
 
   // create notification
   await addDoc(collection(db, "notifications"), {
-    message: `Customer Manual Review: ${data.name || "Customer"}`,
+    message: `Customer Manual Review: ${data.fullName  || "Customer"}`,
     type: "kyc",
     userRole: "siteManager",
     customerId: change.doc.id, // ⭐ new field
@@ -463,16 +647,7 @@ if (
   };
 
 }, []);
-useEffect(() => {
-  const unsub = onSnapshot(collection(db, "disputes"), (snapshot) => {
-    setStats(prev => ({
-      ...prev,
-      disputes: snapshot.size
-    }));
-  });
 
-  return () => unsub();
-}, []);
 useEffect(() => {
   const unsub = onSnapshot(collection(db, "bookings"), (snap) => {
 
@@ -551,36 +726,7 @@ useEffect(() => {
 
   return () => unsub();
 }, []);
-useEffect(() => {
-  const q = query(
-    collection(db, "bookings"),
-    where("paidAt", "!=", null) // SAME AS AllBookings
-  );
 
-  const unsub = onSnapshot(q, (snapshot) => {
-    let active = 0;
-
-    snapshot.forEach(doc => {
-      const status = (doc.data().status || "").toUpperCase();
-
-      if (
-        status === "BOOKING_PLACED" ||
-        status === "IN_TRANSIT"
-        ) {
-             active++;
-          }
-
-    });
-
-    setStats(prev => ({
-      ...prev,
-      totalBookings: snapshot.size, //  REAL TOTAL
-      activeBookings: active
-    }));
-  });
-
-  return () => unsub();
-}, []);
 
 
   return (
@@ -785,7 +931,7 @@ useEffect(() => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               <StatCard title="Pending KYC" value={stats.pendingKYC} subtitle="Needs verification" gradientClass="bg-gradient-to-br from-yellow-400 to-orange-500 shadow-md hover:-translate-y-1 transition" />
               <StatCard title="Active Bookings" value={stats.activeBookings} subtitle="Currently ongoing" gradientClass="bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md hover:-translate-y-1 transition" />
-              <StatCard title="Disputes" value={stats.disputes} subtitle="Needs resolution" gradientClass="bg-gradient-to-br from-red-500 to-red-600 shadow-md hover:-translate-y-1 transition" />
+              <StatCard title="Pending Disputes" value={stats.pendingDisputes} subtitle="Needs resolution" gradientClass="bg-gradient-to-br from-red-500 to-red-600 shadow-md hover:-translate-y-1 transition" />
               <StatCard title="Pending Payments" value={stats.pendingPayments} subtitle="Ready to release" gradientClass="bg-gradient-to-br from-orange-400 to-red-500 shadow-md hover:-translate-y-1 transition" />
             </div>
 
@@ -853,8 +999,8 @@ useEffect(() => {
                       <span>{stats.pendingKYC}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-blue-100">Active Disputes</span>
-                      <span>{stats.disputes}</span>
+                      <span className="text-sm text-blue-100">Approved Disputes</span>
+                      <span>{stats.approvedDisputes}</span> 
                     </div>
                   </div>
                 </CardContent>

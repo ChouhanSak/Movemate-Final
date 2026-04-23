@@ -55,7 +55,7 @@ const [agencies, setAgencies] = useState([]);
           kyc: data.kyc || { status: "MANUAL_REVIEW" },
 
           // Account status
-          status: data.activity || "Active",
+          status: data.status || "Active",
         };
       })
       //  Rejected agencies mat dikhao
@@ -322,7 +322,6 @@ ${
         html: `
           <table style="width:100%; text-align:left">
             <tr><td><b>Status</b></td><td>${kyc.status}</td></tr>
-            <tr><td><b>Name</b></td><td>${ex.nameFromDoc || "-"}</td></tr>
             <tr><td><b>DOB</b></td><td>${ex.dob || "-"}</td></tr>
             <tr><td><b>Gender</b></td><td>${ex.gender || "-"}</td></tr>
             <tr><td><b>Masked Aadhaar</b></td><td>${ex.maskedAadhaar || "-"}</td></tr>
@@ -335,19 +334,46 @@ ${
   }
 
   const res = await Swal.fire({
-    title: action === "block" ? "Block Agency?" : "Unblock Agency?",
-    icon: "question",
-    showCancelButton: true,
-    confirmButtonText: action === "block" ? "Yes, Block" : "Yes, Unblock",
+  title: action === "block" ? "Block Agency?" : "Unblock Agency?",
+  icon: "question",
+  showCancelButton: true,
+  confirmButtonText: action === "block" ? "Yes, Block" : "Yes, Unblock",
+});
+
+if (res.isConfirmed) {
+  let reason = "";
+
+  // 🔴 BLOCK → reason required
+  if (action === "block") {
+    const input = await Swal.fire({
+      title: "Block Reason",
+      input: "select",
+      inputOptions: {
+        disputes: "Too many customer disputes",
+        fraud: "Fraud / suspicious activity",
+        delay: "Too many delivery delays",
+        fake: "Fake documents",
+        other: "Other reason"
+      },
+      inputPlaceholder: "Select reason",
+      showCancelButton: true,
+      inputValidator: (value) => {
+        if (!value) return "Please select a reason!";
+      }
+    });
+
+    if (!input.value) return;
+    reason = input.value;
+  }
+
+  await updateDoc(doc(db, "agencies", agency.id), {
+    status: action === "block" ? "Blocked" : "Active",
+    blockReason: action === "block" ? reason : "",
   });
 
-  if (res.isConfirmed) {
-    await updateDoc(doc(db, "agencies", agency.id), {
-      status: action === "block" ? "Blocked" : "Active",
-    });
-    fetchAgencies();
+  fetchAgencies();
+}
   }
-};
 // ======== STATS COUNTS ========
 const totalAgencies = originalAgencies.length;
 

@@ -1,13 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { Plus, X, Truck, Trash2 } from "lucide-react";
-import { auth, db } from "../../Firebase";
+import { auth, db } from "../../firebase";
 import { collection, addDoc, query, where, getDocs, deleteDoc, doc, getDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import Swal from "sweetalert2";
 import { onAuthStateChanged } from "firebase/auth";
 import EmptyState from "../../components/EmptyState";
 
 export default function ManageVehicle() {
+  const [saving, setSaving] = useState(false);
   const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const handleCloseModal = () => {
+  setShowAddVehicle(false);
+  setForm({ type: "", capacity: "", license: "" });
+  setLicenseWarning("");
+  setMessage("");
+};
   const [vehicles, setVehicles] = useState([]);
   const [agency, setAgency] = useState(null);
   const [form, setForm] = useState({ type: "", capacity: "", license: "" });
@@ -77,6 +84,7 @@ if (!licenseRegex.test(form.license)) {
   return;
 }
     try {
+      setSaving(true);
       const q = query(
         collection(db, "vehicles"),
         where("license", "==", form.license.toUpperCase()),
@@ -85,10 +93,11 @@ if (!licenseRegex.test(form.license)) {
 
       const snap = await getDocs(q);
       if (!snap.empty) {
-        setMessage("Vehicle with this license already exists!");
-        return;
-      }
-
+  setMessage("Vehicle with this license already exists!");
+  setTimeout(() => setMessage(""), 3000);
+  setSaving(false);
+  return;
+}
       const docRef = await addDoc(collection(db, "vehicles"), {
         agencyId: auth.currentUser.uid,
         agencyName: agency.agencyName,
@@ -108,6 +117,9 @@ if (!licenseRegex.test(form.license)) {
       console.error(err);
       setMessage("Error adding vehicle");
     }
+    finally {
+    setSaving(false); 
+  }
   };
 
   // Load agency & vehicles
@@ -137,7 +149,12 @@ if (!licenseRegex.test(form.license)) {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Fleet Management</h1>
         <button
-          onClick={() => setShowAddVehicle(true)}
+  onClick={() => {
+    setForm({ type: "", capacity: "", license: "" });
+    setLicenseWarning("");
+    setMessage("");
+    setShowAddVehicle(true);
+  }}
           className="flex items-center gap-2 px-4 py-2 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all"
           style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
         >
@@ -207,7 +224,10 @@ if (!licenseRegex.test(form.license)) {
           <div className="bg-white rounded-xl w-[420px] p-6 shadow-2xl">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-semibold">Add New Vehicle</h2>
-              <X className="w-6 h-6 cursor-pointer text-gray-500 hover:text-gray-800" onClick={() => setShowAddVehicle(false)} />
+              <X
+  className="w-6 h-6 cursor-pointer text-gray-500 hover:text-gray-800"
+  onClick={handleCloseModal}
+/>
             </div>
             <div className="space-y-4">
               <label className="text-sm font-medium text-gray-700">Vehicle Type</label>
@@ -270,12 +290,19 @@ if (!licenseRegex.test(form.license)) {
                 <p className="text-red-500 text-sm">{message}</p>
               )}
               <button
-                className="w-full py-2 text-white font-medium rounded-lg mt-4 shadow-md hover:shadow-lg transition-all"
-                style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
-                onClick={handleAddVehicle}
-              >
-                Save Vehicle
-              </button>
+  className={`w-full py-2 text-white font-medium rounded-lg mt-4 shadow-md transition-all ${
+    saving ? "bg-gray-400 cursor-not-allowed" : ""
+  }`}
+  style={
+    saving
+      ? {}
+      : { background: "linear-gradient(90deg, #3b82f6, #a855f7)" }
+  }
+  onClick={handleAddVehicle}
+  disabled={saving}
+>
+  {saving ? "Saving..." : "Save Vehicle"}
+</button>
             </div>
           </div>
         </div>

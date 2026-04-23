@@ -1,6 +1,6 @@
 import { CalendarCheck, CheckCircle, AlertTriangle, Eye } from "lucide-react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
-import { db } from "../../Firebase";
+import { db } from "../../firebase";
 import { useEffect, useState } from "react";
 import BookingDetails from "./BookingDetails";
 export default function AllBookings() {

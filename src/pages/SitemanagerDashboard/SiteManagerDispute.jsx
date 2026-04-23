@@ -6,11 +6,13 @@ import {
   orderBy,
   doc,
   updateDoc,
-  getDoc
+  getDoc,addDoc,
+  serverTimestamp
 } from "firebase/firestore";
-import { db } from "../../Firebase";
+import { db } from "../../firebase";
 
 export default function SiteManagerDispute() {
+  const [loadingId, setLoadingId] = useState(null);
   const [disputes, setDisputes] = useState([]);
 
   // 🔥 Fetch disputes
@@ -57,6 +59,7 @@ export default function SiteManagerDispute() {
 
  const runAICompare = async (dispute) => {
   try {
+     setLoadingId(dispute.id);
     // fetch booking to get real before/after photos
     const bookingSnap = await getDoc(
       doc(db, "bookings", dispute.bookingId)
@@ -97,15 +100,40 @@ export default function SiteManagerDispute() {
     console.error(err);
     alert("AI comparison failed");
   }
+  finally {
+    setLoadingId(null);
+  }
 };
 
 
 
-  const handleAction = async (id, action) => {
-    await updateDoc(doc(db, "disputes", id), {
-      status: action
-    });
-  };
+ const handleAction = async (dispute, action) => {
+  // 🔹 booking fetch karo
+  const bookingSnap = await getDoc(
+    doc(db, "bookings", dispute.bookingId)
+  );
+
+  if (!bookingSnap.exists()) return;
+
+  const customerId = bookingSnap.data().customerId;
+
+  // 🔹 dispute status update
+  await updateDoc(doc(db, "disputes", dispute.id), {
+    status: action
+  });
+
+  // 🔥 notification send
+  await addDoc(collection(db, "notifications"), {
+    userId: customerId,
+    title: action === "APPROVED" ? "Dispute Approved" : "Dispute Rejected",
+    message:
+      action === "APPROVED"
+        ? "Your dispute has been approved."
+        : "Your dispute has been rejected.",
+    createdAt: serverTimestamp(),
+    read: false,
+  });
+};
 
   return (
     <div className="p-6 max-w-5xl mx-auto font-sans">
@@ -203,21 +231,26 @@ export default function SiteManagerDispute() {
           {/* Buttons */}
           <div className="flex gap-3 mt-4">
             <button
-              onClick={() => runAICompare(d)}
-              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
-            >
-              Run AI Comparison
-            </button>
+  onClick={() => runAICompare(d)}
+  disabled={loadingId === d.id}
+  className={`px-4 py-2 text-white rounded ${
+    loadingId === d.id
+      ? "bg-gray-400 cursor-not-allowed"
+      : "bg-purple-600 hover:bg-purple-700"
+  }`}
+>
+  {loadingId === d.id ? "Running..." : "Run AI Comparison"}
+</button>
 
             <button
-              onClick={() => handleAction(d.id, "APPROVED")}
+              onClick={() => handleAction(d, "APPROVED")}
               className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
             >
               Approve
             </button>
 
             <button
-              onClick={() => handleAction(d.id, "REJECTED")}
+              onClick={() => handleAction(d, "REJECTED")}
               className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
             >
               Reject

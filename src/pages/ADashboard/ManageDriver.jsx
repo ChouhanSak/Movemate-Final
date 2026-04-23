@@ -19,7 +19,16 @@ import EmptyState from "../../components/EmptyState";
 
 export default function ManageDriver() {
   const [editDriver, setEditDriver] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [showAddDriver, setShowAddDriver] = useState(false);
+  const handleCloseModal = () => {
+  setShowAddDriver(false);
+  setEditDriver(null); 
+  setForm({
+    name: "",
+    phone: ""
+  });
+};
   const [drivers, setDrivers] = useState([]);
   const [agency, setAgency] = useState(null);
 const [search, setSearch] = useState("");
@@ -31,7 +40,9 @@ const filteredDrivers = drivers.filter((d) =>
   d.driverName.toLowerCase().includes(search.toLowerCase())
 );
   const [message, setMessage] = useState("");
-
+const [error, setError] = useState("");
+const [success, setSuccess] = useState("");
+const [phoneExists, setPhoneExists] = useState(false);
   const getStatusStyle = (status) => {
     if (status === "Available") return "bg-green-100 text-green-700";
     if (status === "Not Available") return "bg-gray-200 text-gray-700";
@@ -86,72 +97,76 @@ const handleEditDriver = (driver) => {
 const nameRegex = /^[A-Za-z\s]+$/;
 if (!nameRegex.test(form.name)) {
   setMessage("Driver name should contain only letters");
-  setTimeout(() => setMessage(""), 3000);
+  setTimeout(() => setError(""), 3000);
   return;
 }
 
 const phoneRegex = /^[6-9]\d{9}$/;
 
 if (!phoneRegex.test(form.phone)) {
-  setMessage("Enter valid phone number");
-  return;
+  setError("Enter valid phone number");
+setTimeout(() => setError(""), 3000);
+return;
 }
 
 if (/^(\d)\1{9}$/.test(form.phone)) {
   setMessage("Invalid phone number");
+  setTimeout(() => setError(""), 3000);
   return;
 }
 
-    try {
-      const q = query(
+  try {
+  setSaving(true);
+ const q = query(
   collection(db, "drivers"),
   where("agencyId", "==", auth.currentUser.uid),
-  where("driverName", "==", form.name),
   where("phone", "==", form.phone)
 );
 
 const snap = await getDocs(q);
 
+// If adding new driver → block duplicate phone
 if (!snap.empty && !editDriver) {
-  setMessage("Driver with same name and phone already exists");
-  setTimeout(() => setMessage(""), 3000);
+  setSaving(false);
+  setError("Driver with this phone number already exists");
+  setTimeout(() => setError(""), 3000);
   return;
 }
-      if (editDriver) {
 
+// If editing → allow only if it's same driver
+if (editDriver) {
+  const existing = snap.docs.find(doc => doc.id !== editDriver.id);
+
+  if (existing) {
+    setSaving(false);
+    setError("Another driver already uses this phone number");
+    setTimeout(() => setError(""), 3000);
+    return;
+  }
+}
+if (editDriver) {
   await updateDoc(doc(db, "drivers", editDriver.id), {
     driverName: form.name,
     phone: form.phone
   });
-
   setEditDriver(null);
   setShowAddDriver(false);
-
   setForm({
     name: "",
     phone: ""
   });
-
   setMessage("Driver updated successfully!");
-  setTimeout(() => setMessage(""), 3000);
-
+  setTimeout(() => setSuccess(""), 3000);
   return;
 }
-
-      const docRef = await addDoc(collection(db, "drivers"), {
-
+  const docRef = await addDoc(collection(db, "drivers"), {
   agencyId: auth.currentUser.uid,
   agencyName: agency.agencyName,
-
   driverName: form.name,
   phone: form.phone,
-
   status: "Available",
-
   createdAt: serverTimestamp()
-
 });
-
       setDrivers([
         ...drivers,
         {
@@ -170,13 +185,15 @@ if (!snap.empty && !editDriver) {
       });
 
       setMessage("Driver added successfully!");
-
-      setTimeout(() => setMessage(""), 4000);
+setTimeout(() => setSuccess(""), 3000);
 
     } catch (err) {
       console.error(err);
       setMessage("Error adding driver");
     }
+    finally {
+    setSaving(false);
+  }
   };
 
   // LOAD DRIVERS
@@ -212,7 +229,31 @@ if (!snap.empty && !editDriver) {
     return () => unsub();
 
   }, []);
+useEffect(() => {
+  const checkPhone = async () => {
+    if (form.phone.length !== 10) {
+      setPhoneExists(false);
+      return;
+    }
 
+    const q = query(
+      collection(db, "drivers"),
+      where("agencyId", "==", auth.currentUser.uid),
+      where("phone", "==", form.phone)
+    );
+
+    const snap = await getDocs(q);
+
+    if (editDriver) {
+      const existing = snap.docs.find(doc => doc.id !== editDriver.id);
+      setPhoneExists(!!existing);
+    } else {
+      setPhoneExists(!snap.empty);
+    }
+  };
+
+  checkPhone();
+}, [form.phone, editDriver]);
   return (
     <div className="p-6 bg-white min-h-screen">
 
@@ -233,13 +274,16 @@ if (!snap.empty && !editDriver) {
     />
 
         <button
-          onClick={() => setShowAddDriver(true)}
+          onClick={() => {
+  setEditDriver(null); 
+  setForm({ name: "", phone: "" });
+  setShowAddDriver(true);
+}}
           className="flex items-center gap-2 px-4 py-2 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all"
           style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
         >
           <Plus className="w-5 h-5" /> Add Driver
         </button>
-
       </div>
        </div>
 
@@ -356,23 +400,23 @@ if (!snap.empty && !editDriver) {
   {editDriver ? "Edit Driver" : "Add New Driver"}
 </h2>
 
-              <X
-                className="w-6 h-6 cursor-pointer text-gray-500 hover:text-gray-800"
-                onClick={() => setShowAddDriver(false)}
-              />
+<X
+  className="w-6 h-6 cursor-pointer text-gray-500 hover:text-gray-800"
+  onClick={handleCloseModal}
+/>
 
-            </div>
+</div>
 
-            <div className="space-y-4">
+<div className="space-y-4">
 
-              <div>
-                <label className="text-sm font-medium text-gray-700">
-                  Driver Name
-                </label>
+<div>
+  <label className="text-sm font-medium text-gray-700">
+    Driver Name
+  </label>
 
-                <input
+  <input
   type="text"
-  className="w-full mt-1 p-2 border border-gray-300 rounded-lg"
+ className="w-full mt-1 p-2 border border-gray-300 rounded-lg"
   placeholder="Driver name"
   value={form.name}
   onChange={(e) => {
@@ -393,7 +437,9 @@ if (!snap.empty && !editDriver) {
 
                 <input
   type="text"
-  className="w-full mt-1 p-2 border border-gray-300 rounded-lg"
+ className={`w-full mt-1 p-2 border rounded-lg ${
+  phoneExists ? "border-red-500" : "border-gray-300"
+}`}
   placeholder="9876543210"
   value={form.phone}
   maxLength={10}
@@ -406,17 +452,33 @@ if (!snap.empty && !editDriver) {
     }
   }}
 />
-              </div>
-              {message && (
-                <p className="text-red-500 text-sm">{message}</p>
-              )}
-
-              <button
-  className="w-full py-2 text-white font-medium rounded-lg mt-4 shadow-md hover:shadow-lg transition-all"
-  style={{ background: "linear-gradient(90deg, #3b82f6, #a855f7)" }}
+</div>
+{error && (
+  <p className="text-red-500 text-sm">{error}</p>
+)}
+{phoneExists && (
+  <p className="text-red-500 text-sm">
+    Phone number already exists
+  </p>
+)}
+  <button
+  className={`w-full py-2 text-white font-medium rounded-lg mt-4 shadow-md transition-all ${
+  saving ? "bg-gray-400 cursor-not-allowed" : ""
+  }`}
+  style={
+    saving
+      ? {}
+      : { background: "linear-gradient(90deg, #3b82f6, #a855f7)" }
+  }
   onClick={handleAddDriver}
->
-  {editDriver ? "Update Driver" : "Save Driver"}
+disabled={saving || phoneExists}>
+  {saving
+    ? editDriver
+      ? "Updating..."
+      : "Saving..."
+    : editDriver
+    ? "Update Driver"
+    : "Save Driver"}
 </button>
 
             </div>
@@ -429,11 +491,19 @@ if (!snap.empty && !editDriver) {
 
       {/* SUCCESS MESSAGE */}
 
-      {message && (
-        <div className="fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-xl text-white font-medium bg-green-600">
-          {message}
-        </div>
-      )}
+      {/* ERROR */}
+{error && (
+  <div className="fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-xl text-white font-medium bg-red-500">
+    {error}
+  </div>
+)}
+
+{/* SUCCESS */}
+{success && (
+  <div className="fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-xl text-white font-medium bg-green-600">
+    {success}
+  </div>
+)}
 
     </div>
   );
