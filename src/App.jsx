@@ -9,13 +9,12 @@ import LoginForm from "./pages/LoginForm";
 import ForgotPassword from "./pages/ForgotPassword";
 import CustomerDashboard from "./pages/CustomerDashboard/Dashboard";
 import AgencyDashboard from "./pages/ADashboard/AgencyDashboard";
-
+import Trackshipment from "./pages/CustomerDashboard/Trackshipment";
 import SiteManagerLogin from "./pages/Sitemanagerlogin";
 import SiteManager from "./pages/SitemanagerDashboard/SiteManager";
 import ContactSupport from "./pages/ContactSupport";
 import TermsAndConditions from "./pages/Terms";
 import PrivacyPolicy from "./pages/Privacy";
-import Chatbot from "./components/Chatbot";
 export default function App() {
   return (
     <>
@@ -31,7 +30,9 @@ export default function App() {
         <Route path="/signup/customer" element={<Signupc />} />
         <Route path="/signup/agency" element={<Signupa />} />
         <Route path="/customer-dashboard" element={<CustomerDashboard />} />
-<Route path="/agency-dashboard" element={<AgencyDashboard />} />
+          <Route path="/agency-dashboard" element={<AgencyDashboard />} />
+          <Route path="/track" element={<Trackshipment />} />
+          
           <Route path="/driver-upload/:token" element={<DriverUpload />} />
         <Route path="/sitemanager" element={<SiteManagerLogin />} />
         <Route path="/site-manager-dashboard" element={<SiteManager />} />
@@ -41,7 +42,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
-       <Chatbot /> 
+        
     </>
   );
 }

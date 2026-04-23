@@ -8,54 +8,47 @@ export default function AllBookings() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedBookingId, setSelectedBookingId] = useState(null);
-const normalizeStatus = (status) => {
-  switch (status) {
-    case "BOOKED":
-    case "ASSIGNED":
-    case "IN_TRANSIT":
-      return "active";
-
-    case "COMPLETED":
-      return "completed";
-
-    case "DISPUTED":
-      return "disputed";
-
-    default:
-      return "active";
-  }
-};
 useEffect(() => {
-  const q = query(
-    collection(db, "bookings"),
-    where("paidAt", "!=", null)
-  );
+
+  // fetch ALL bookings
+  const q = query(collection(db, "bookings"));
 
   const unsub = onSnapshot(q, (snapshot) => {
-    const list = snapshot.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        trackId: `#${doc.id.slice(0, 10).toUpperCase()}`,
-        customer: data.customerName,
-        agency: data.agencyName,
-        from: `${data.pickupAddress.city}, ${data.pickupAddress.state}`,
-        to: `${data.dropAddress.city}, ${data.dropAddress.state}`,
-        amount: Math.round(data.price),
-        date: data.createdAt?.toDate(),
-        adminHold: true,
-        status: normalizeStatus(data.status),
-      };
-    });
 
+    const list = snapshot.docs
+      .map((doc) => {
+        const data = doc.data();
+
+        return {
+          id: doc.id,
+          trackId: `#${doc.id.slice(0, 10).toUpperCase()}`,
+          customer: data.customerName,
+          agency: data.agencyName,
+
+          // optional chaining crash avoid karega
+          from: `${data.pickupAddress?.city || ""}, ${data.pickupAddress?.state || ""}`,
+          to: `${data.dropAddress?.city || ""}, ${data.dropAddress?.state || ""}`,
+
+          amount: Math.round(data.price || 0),
+          date: data.createdAt?.toDate(),
+
+          adminHold: data.status !== "COMPLETED",
+          status: data.status?.toUpperCase(),
+        };
+      })
+
+      // only remove completed bookings
+      .filter((b) => b.status !== "COMPLETED");
+
+    // 🔴 THIS WAS MISSING
     setBookings(list);
+
     setLoading(false);
   });
+
   return () => unsub();
+
 }, []);
-if (loading) {
-  return <div className="p-6">Loading bookings...</div>;
-}
 
 const formatDate = (date) =>
   date?.toLocaleDateString("en-IN", {
@@ -65,11 +58,73 @@ const formatDate = (date) =>
   });
 
   const STATUS = {
-    active: { bg: "bg-blue-50", text: "text-blue-600", icon: <CalendarCheck size={14} />, label: "Active" },
-    completed: { bg: "bg-green-50", text: "text-green-600", icon: <CheckCircle size={14} />, label: "Completed" },
-    disputed: { bg: "bg-red-50", text: "text-red-600", icon: <AlertTriangle size={14} />, label: "Disputed" },
-    admin: { bg: "bg-orange-50", text: "text-orange-600", label: "Admin Holding" },
-  };
+  
+  PENDING: {
+  bg: "bg-yellow-50",
+  text: "text-yellow-600",
+  icon: <AlertTriangle size={14} />,
+  label: "Pending",
+},
+PAYMENT_PENDING: {
+  bg: "bg-orange-50",
+  text: "text-orange-700",
+  icon: <AlertTriangle size={14} />,
+  label: "Payment Pending",
+},
+CANCELLED: {
+  bg: "bg-red-50",
+  text: "text-red-600",
+  icon: <AlertTriangle size={14} />,
+  label: "Cancelled",
+},
+  BOOKING_PLACED: {
+    bg: "bg-indigo-50",
+    text: "text-indigo-600",
+    icon: <CalendarCheck size={14} />,
+    label: "Booking Placed",
+  },
+
+  PAYMENT_CONFIRMED: {
+    bg: "bg-green-50",
+    text: "text-green-600",
+    icon: <CheckCircle size={14} />,
+    label: "Payment Confirmed",
+  },
+
+  // ASSIGNED: {
+  //   bg: "bg-purple-50",
+  //   text: "text-purple-600",
+  //   icon: <CheckCircle size={14} />,
+  //   label: "Driver Assigned",
+  // },
+
+  IN_TRANSIT: {
+    bg: "bg-blue-50",
+    text: "text-blue-600",
+    icon: <CalendarCheck size={14} />,
+    label: "In Transit",
+  },
+
+  COMPLETED: {
+    bg: "bg-green-50",
+    text: "text-green-700",
+    icon: <CheckCircle size={14} />,
+    label: "Completed",
+  },
+
+  DISPUTED: {
+    bg: "bg-red-50",
+    text: "text-red-600",
+    icon: <AlertTriangle size={14} />,
+    label: "Disputed",
+  },
+
+  admin: {
+    bg: "bg-orange-50",
+    text: "text-orange-600",
+    label: "Admin Holding",
+  },
+};
 
   // Filter bookings based on search input (from/to locations or booking ID)
   const filteredBookings = bookings.filter(
@@ -108,7 +163,7 @@ const formatDate = (date) =>
 
           {filteredBookings.map((b, i) => {
 
-          const mainStatus = STATUS[b.status];
+          const mainStatus = STATUS[b.status] || STATUS.BOOKING_PLACED;
           const adminStatus = STATUS.admin;
           return (
             <div

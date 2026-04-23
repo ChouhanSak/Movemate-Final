@@ -3,7 +3,8 @@ import {
   Home, Users, Building, Box, AlertTriangle, DollarSign, LogOut, X as XIcon, Menu, Bell as BellIcon, 
   BarChart3, Activity, Clock, Truck, CheckCircle 
 } from "lucide-react";
-
+import { getDocs } from "firebase/firestore";
+import { addDoc, serverTimestamp, Timestamp, updateDoc, doc } from "firebase/firestore";
 import smallTruck from "../../assets/smalltruck.png";
 import ManageCustomer from "./ManageCustomer";
 import ManageAgency from "./ManageAgency"; // import ManageAgency
@@ -11,13 +12,13 @@ import AllBookings from "./AllBookings";
 import PaymentManagement from "./paymentmanagement";
 import SiteManagerDispute from "./SiteManagerDispute";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "../../Firebase";
+import { auth } from "../../firebase";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
-import { db } from "../../Firebase";
+import { db } from "../../firebase";
 import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import Footer from "../../components/Footer"; 
-
+import { deleteDoc } from "firebase/firestore";
 /* ---------- StatCard Component ---------- */
 
 const StatCard = ({ title, value, subtitle, gradientClass = "" }) => (
@@ -34,15 +35,15 @@ const StatCard = ({ title, value, subtitle, gradientClass = "" }) => (
 );
 
 /* ---------- BookingTrends Component ---------- */
+
 const BookingTrends = ({ width = 520, height = 260, data = [45, 52, 49, 62, 72, 69] }) => {
+  const [hoverIndex, setHoverIndex] = useState(null);
   const padding = 40;
   const w = width;
   const h = height;
   const safeData = data.length ? data : [0, 0, 0, 0, 0, 0];
   const maxVal = Math.max(...safeData) * 1.2 || 10;
-
  const stepX = (w - padding * 2) / (safeData.length - 1);
-
 
   const points = safeData
   .map((d, i) => {
@@ -57,15 +58,48 @@ const BookingTrends = ({ width = 520, height = 260, data = [45, 52, 49, 62, 72, 
 
     const x = padding + i * stepX;
     const y = padding + (1 - d / maxVal) * (h - padding * 2);
-    return <circle key={i} cx={x} cy={y} r={4.5} fill="#2b7bf6" stroke="#fff" strokeWidth="1" />;
+    return (
+  <circle
+    key={i}
+    cx={x}
+    cy={y}
+    r={5}
+    fill="#2b7bf6"
+    stroke="#fff"
+    strokeWidth="1"
+    style={{ cursor: "pointer" }}
+  />
+);
   });
 
   const ticks = [0, maxVal * 0.25, maxVal * 0.5, maxVal * 0.75, maxVal];
 
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-md">
+    <div className="bg-white rounded-2xl p-5 shadow-md relative">
       <div className="text-md font-medium mb-4">Booking Trends</div>
-      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h}>
+      <svg
+  viewBox={`0 0 ${w} ${h}`}
+  width="100%"
+  height={h}
+  onMouseMove={(e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+
+    const index = Math.round((mouseX - padding) / stepX);
+
+    if (index >= 0 && index < safeData.length) {
+      setHoverIndex(index);
+    }
+  }}
+  onMouseLeave={() => setHoverIndex(null)}
+>
+  <rect
+    x="0"
+    y="0"
+    width={w}
+    height={h}
+    fill="transparent"
+  />
         {ticks.map((t, i) => {
           const y = padding + (1 - t / maxVal) * (h - padding * 2);
           return (
@@ -90,12 +124,29 @@ const BookingTrends = ({ width = 520, height = 260, data = [45, 52, 49, 62, 72, 
         <polyline points={`${points} ${w - padding},${h - padding} ${padding},${h - padding}`} fill="#cfe3ff" opacity="0.12" />
         {circles}
       </svg>
+      {hoverIndex !== null && (
+  <div
+    className="absolute bg-white border shadow-lg rounded-lg px-3 py-2 text-sm"
+    style={{
+      top: 60,
+      left: padding + hoverIndex * stepX
+    }}
+  >
+    <div className="font-medium">
+      {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][hoverIndex]}
+    </div>
+
+    <div className="text-blue-600">
+      Bookings: {safeData[hoverIndex]}
+    </div>
+  </div>
+)}
     </div>
   );
 };
 
 /* ---------- QuickInsights Component ---------- */
-const QuickInsights = () => {
+const QuickInsights = ({ stats }) => {
   return (
     <div className="shadow-lg border-0 bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-2xl">
       <div className="p-6">
@@ -108,22 +159,24 @@ const QuickInsights = () => {
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/20">
             <p className="text-sm text-blue-100 mb-1">Growth This Month</p>
-            <p className="text-2xl mb-1">+15.3%</p>
+           <p className="text-2xl mb-1">
+             {stats.growth > 0 ? `+${formatNumber(stats.growth)}` : formatNumber(stats.growth)}%
+          </p>
             <p className="text-xs text-blue-100">Compared to last month</p>
           </div>
           <div className="bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/20">
             <p className="text-sm text-blue-100 mb-1">Avg. Booking Value</p>
-            <p className="text-2xl mb-1">₹3,250</p>
+            <p className="text-2xl mb-1">₹{formatNumber(stats.avgBookingValue)}</p>
             <p className="text-xs text-blue-100">Per transaction</p>
           </div>
           <div className="bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/20">
             <p className="text-sm text-blue-100 mb-1">Customer Satisfaction</p>
-            <p className="text-2xl mb-1">4.8/5.0</p>
-            <p className="text-xs text-blue-100">Based on 245 reviews</p>
+            <p className="text-2xl mb-1">{stats.avgRating || 0}/5.0</p>
+            <p className="text-xs text-blue-100">Based on {stats.totalRatings || 0} reviews</p>
           </div>
           <div className="bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/20">
             <p className="text-sm text-blue-100 mb-1">Agency Performance</p>
-            <p className="text-2xl mb-1">92%</p>
+            <p className="text-2xl mb-1">{stats.agencyPerformance || 0}%</p>
             <p className="text-xs text-blue-100">On-time delivery rate</p>
           </div>
         </div>
@@ -137,6 +190,17 @@ const Card = ({ children, className = "" }) => <div className={`rounded-2xl ${cl
 const CardHeader = ({ children }) => <div className="border-b p-4 flex justify-between items-center">{children}</div>;
 const CardTitle = ({ children, className = "" }) => <h4 className={`font-semibold text-lg ${className}`}>{children}</h4>;
 const CardContent = ({ children, className = "" }) => <div className={className}>{children}</div>;
+const formatNumber = (num) => {
+  if (!num) return "0";
+
+  num = Number(num);
+
+  if (num >= 10000000) return (num / 10000000).toFixed(2) + "Cr";
+  if (num >= 100000) return (num / 100000).toFixed(2) + "L";
+  if (num >= 1000) return (num / 1000).toFixed(2) + "K";
+
+  return num.toString();
+};
 
 /* ---------- Main Component ---------- */
 export default function SiteManager() {
@@ -145,8 +209,190 @@ export default function SiteManager() {
   const [showActiveBookingPanel, setShowActiveBookingPanel] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const navigate = useNavigate();
+const [notifications, setNotifications] = useState([]);
+const [unreadCount, setUnreadCount] = useState(0);
+const [showNotifications, setShowNotifications] = useState(false);
+const hasLoadedDisputes = React.useRef(false);
+const hasLoadedCustomers = React.useRef(false);
+const hasLoadedAgencies = React.useRef(false);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "disputes"), (snapshot) => {
 
+    let pendingCount = 0;
 
+    snapshot.forEach(doc => {
+      const status = (doc.data().status || "").toUpperCase();
+
+      if (
+        status !== "APPROVED" &&
+        status !== "REJECTED" &&
+        status !== "AI_REVIEWED"
+      ) {
+        pendingCount++;
+      }
+    });
+
+    setStats(prev => ({
+  ...prev,
+  pendingDisputes: pendingCount
+}));
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "disputes"), (snapshot) => {
+
+    let approvedCount = 0;
+
+    snapshot.forEach(doc => {
+      const status = (doc.data().status || "").toUpperCase();
+
+      if (status === "APPROVED") {
+        approvedCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      approvedDisputes: approvedCount
+    }));
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "bookings"), (snap) => {
+
+    let activeCount = 0;
+    let totalCount = snap.size;
+
+    snap.forEach(doc => {
+      const status = (doc.data().status || "").toUpperCase();
+
+      if (
+        status === "BOOKING_PLACED" ||
+        status === "IN_TRANSIT"
+      ) {
+        activeCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      activeBookings: activeCount,
+      totalBookings: totalCount
+    }));
+
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "payments"), (snap) => {
+    let holdingCount = 0;
+    let holdingAmount = 0;
+
+    snap.forEach(doc => {
+      const data = doc.data();
+      const paymentStatus = (data.paymentStatus || "").toUpperCase();
+
+      if (paymentStatus === "HOLDING") {
+        holdingCount++;
+
+        if (data.amount) {
+          holdingAmount += data.amount;
+        }
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingPayments: holdingCount,
+      totalHolding: Math.round(holdingAmount)
+    }));
+  });
+
+  return () => unsub();
+}, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "payments"), (snap) => {
+
+    let releasedAmount = 0;
+    let releasedCount = 0;
+
+    const today = new Date();
+    const todayDate = today.toDateString();
+
+    snap.forEach(doc => {
+      const data = doc.data();
+
+      if (data.releaseAt) {
+        const releaseDate = data.releaseAt.toDate().toDateString();
+
+        if (releaseDate === todayDate) {
+          releasedCount++;
+
+          if (data.amount) {
+            releasedAmount += data.amount;
+          }
+        }
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      releasedToday: Math.round(releasedAmount),
+      releasedCount: releasedCount
+    }));
+  });
+
+  return () => unsub();
+}, []);
+
+useEffect(() => {
+  let customerCount = 0;
+  let agencyCount = 0;
+
+  const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
+    customerCount = 0;
+
+    snap.forEach(doc => {
+      const status = (doc.data()?.kyc?.status || "").toUpperCase();
+
+      if (status === "MANUAL_REVIEW") {
+        customerCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingKYC: customerCount + agencyCount
+    }));
+  });
+
+  const unsubAgencies = onSnapshot(collection(db, "agencies"), (snap) => {
+    agencyCount = 0;
+
+    snap.forEach(doc => {
+      const status = (doc.data()?.kyc?.status || "").toUpperCase();
+
+      if (status === "MANUAL_REVIEW") {
+        agencyCount++;
+      }
+    });
+
+    setStats(prev => ({
+      ...prev,
+      pendingKYC: customerCount + agencyCount
+    }));
+  });
+
+  return () => {
+    unsubCustomers();
+    unsubAgencies();
+  };
+}, []);
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -155,19 +401,81 @@ export default function SiteManager() {
     });
     return () => unsub();
   }, []);
+useEffect(() => {
+  const unsub = onSnapshot(
+    collection(db, "disputes"),
+    async (snapshot) => {
 
+      if (!hasLoadedDisputes.current) {
+        hasLoadedDisputes.current = true;
+        return;
+      }
+
+      for (const change of snapshot.docChanges()) {
+        if (change.type === "added") {
+
+          const data = change.doc.data();
+
+          await addDoc(collection(db, "notifications"), {
+            message: `New dispute from ${data.customerName || "Customer"}`,
+            type: "dispute",
+            userRole: "siteManager",
+            read: false,
+            createdAt: serverTimestamp(),
+            expireAt: Timestamp.fromDate(
+              new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+            )
+          });
+
+        }
+      }
+    }
+  );
+
+  return () => unsub();
+}, []);
   const [stats, setStats] = useState({
   pendingKYC: 0,
   activeBookings: 0,
-  disputes: 0,
+  pendingDisputes: 0,
+  approvedDisputes: 0,
   pendingPayments: 0,
   totalHolding: 0,
   releasedToday: 0,
   releasedCount: 0, 
   verifiedUsers: 0,
   totalBookings: 0,
+  growth: 0,
+  avgBookingValue: 0,
+  avgRating: 0,
+  totalRatings: 0,
+  agencyPerformance: 0,
 });
 const [monthlyBookings, setMonthlyBookings] = useState([]);
+useEffect(() => {
+  const q = query(
+    collection(db, "notifications"),
+    where("userRole", "==", "siteManager")
+  );
+
+  const unsub = onSnapshot(q, (snapshot) => {
+
+   const list = snapshot.docs
+  .map(docSnap => ({
+    id: docSnap.id,
+    ...docSnap.data()
+  }))
+  .sort((a, b) => {
+    if (!a.createdAt || !b.createdAt) return 0;
+    return b.createdAt.toDate() - a.createdAt.toDate(); // 🔥 latest first
+  });
+
+    setNotifications(list);
+    setUnreadCount(list.filter(n => !n.read).length);
+  });
+
+  return () => unsub();
+}, []);
 useEffect(() => {
   const unsub = onSnapshot(collection(db, "bookings"), (snap) => {
     const months = Array(12).fill(0);
@@ -220,74 +528,205 @@ useEffect(() => {
   };
 }, []);
 useEffect(() => {
-  let customersPending = 0;
-  let agenciesPending = 0;
+  const unsub = onAuthStateChanged(auth, async (user) => {
+    if (!user) return;
 
-  const unsubCustomers = onSnapshot(collection(db, "customers"), (snap) => {
-    customersPending = 0;
+    const fiveDaysAgo = new Date();
+    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
 
-    snap.forEach(doc => {
-      const status = (doc.data()?.kyc?.status || "").toUpperCase();
-      if (status === "MANUAL_REVIEW") customersPending++;
-    });
+    const fiveDaysAgoTimestamp = Timestamp.fromDate(fiveDaysAgo);
 
-    setStats(prev => ({
-      ...prev,
-      pendingKYC: customersPending + agenciesPending
-    }));
+    const q = query(
+      collection(db, "notifications"),
+      where("createdAt", "<", fiveDaysAgoTimestamp)
+    );
+
+    const snapshot = await getDocs(q);
+
+    const deletePromises = snapshot.docs.map(docSnap =>
+      deleteDoc(doc(db, "notifications", docSnap.id))
+    );
+
+    await Promise.all(deletePromises);
   });
 
-  const unsubAgencies = onSnapshot(collection(db, "agencies"), (snap) => {
-    agenciesPending = 0;
+  return () => unsub();
+}, []);
+useEffect(() => {
 
-    snap.forEach(doc => {
-      const status = (doc.data()?.kyc?.status || "").toUpperCase();
-      if (status === "MANUAL_REVIEW") agenciesPending++;
-    });
+  const unsubCustomers = onSnapshot(
+    collection(db, "customers"),
+    async (snapshot) => {
 
-    setStats(prev => ({
-      ...prev,
-      pendingKYC: customersPending + agenciesPending
-    }));
+      if (!hasLoadedCustomers.current) {
+        hasLoadedCustomers.current = true;
+        return;
+      }
+
+      for (const change of snapshot.docChanges()) {
+        const status = (change.doc.data()?.kyc?.status || "").toUpperCase();
+
+      if (
+  change.type === "added" &&
+  status === "MANUAL_REVIEW" 
+) {
+  const data = change.doc.data();
+
+  // check duplicate
+  const existingQuery = query(
+    collection(db, "notifications"),
+    where("type", "==", "kyc"),
+    where("customerId", "==", change.doc.id)
+  );
+
+  const existingSnap = await getDocs(existingQuery);
+  if (!existingSnap.empty) return;
+
+  // create notification
+  await addDoc(collection(db, "notifications"), {
+    message: `Customer Manual Review: ${data.fullName  || "Customer"}`,
+    type: "kyc",
+    userRole: "siteManager",
+    customerId: change.doc.id, // ⭐ new field
+    read: false,
+    createdAt: serverTimestamp(),
+    expireAt: Timestamp.fromDate(
+      new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+    )
   });
+}
+      }
+    }
+  );
+
+  const unsubAgencies = onSnapshot(
+    collection(db, "agencies"),
+    async (snapshot) => {
+
+      if (!hasLoadedAgencies.current) {
+        hasLoadedAgencies.current = true;
+        return;
+      }
+
+      for (const change of snapshot.docChanges()) {
+        const status = (change.doc.data()?.kyc?.status || "").toUpperCase();
+if (
+  change.type === "added" &&
+  status === "MANUAL_REVIEW"
+) {
+  const data = change.doc.data();
+
+  const existingQuery = query(
+    collection(db, "notifications"),
+    where("type", "==", "kyc"),
+    where("agencyId", "==", change.doc.id)
+  );
+
+  const existingSnap = await getDocs(existingQuery);
+  if (!existingSnap.empty) return;
+
+  await addDoc(collection(db, "notifications"), {
+    message: `Agency Manual Review: ${data.agencyName || "Agency"}`,
+    type: "kyc",
+    userRole: "siteManager",
+    agencyId: change.doc.id,
+    read: false,
+    createdAt: serverTimestamp(),
+    expireAt: Timestamp.fromDate(
+      new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+    )
+  });
+}
+      }
+    }
+  );
 
   return () => {
     unsubCustomers();
     unsubAgencies();
   };
+
 }, []);
 
-
 useEffect(() => {
-  const q = query(
-    collection(db, "bookings"),
-    where("paidAt", "!=", null) // SAME AS AllBookings
+  const unsub = onSnapshot(collection(db, "bookings"), (snap) => {
+
+    let totalPrice = 0;
+    let totalBookings = snap.size;
+
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+
+    let currentCount = 0;
+    let lastCount = 0;
+    let completed = 0;
+
+    snap.forEach(doc => {
+      const d = doc.data();
+
+      if (d.price) {
+  const cleanPrice = parseFloat(
+    String(d.price).replace(/[^\d.]/g, "")
   );
+  if (!isNaN(cleanPrice)) {
+    totalPrice += cleanPrice;
+  }
+}
 
-  const unsub = onSnapshot(q, (snapshot) => {
-    let active = 0;
+      if (d.status === "COMPLETED") completed++;
 
-    snapshot.forEach(doc => {
-      const status = (doc.data().status || "").toUpperCase();
+      if (d.createdAt) {
+        const month = d.createdAt.toDate().getMonth();
 
-      if (
-        status === "BOOKING_PLACED" ||
-        status === "IN_TRANSIT"
-        ) {
-             active++;
-          }
-
+        if (month === currentMonth) currentCount++;
+        if (month === lastMonth) lastCount++;
+      }
     });
+
+    const avgBookingValue = totalBookings
+      ? Math.round(totalPrice / totalBookings)
+      : 0;
+
+    const growth = lastCount
+      ? (((currentCount - lastCount) / lastCount) * 100).toFixed(1)
+      : 0;
+
+    const performance = totalBookings
+      ? Math.round((completed / totalBookings) * 100)
+      : 0;
 
     setStats(prev => ({
       ...prev,
-      totalBookings: snapshot.size, //  REAL TOTAL
-      activeBookings: active
+      avgBookingValue,
+      growth,
+      agencyPerformance: performance
     }));
   });
 
   return () => unsub();
 }, []);
+useEffect(() => {
+  const unsub = onSnapshot(collection(db, "ratings"), (snap) => {
+
+    let sum = 0;
+
+    snap.forEach(doc => {
+      sum += doc.data().rating || 0;
+    });
+
+    const avg = snap.size ? (sum / snap.size).toFixed(1) : 0;
+
+    setStats(prev => ({
+      ...prev,
+      avgRating: avg,
+      totalRatings: snap.size
+    }));
+  });
+
+  return () => unsub();
+}, []);
+
 
 
   return (
@@ -407,7 +846,63 @@ useEffect(() => {
 
               </div>
               <div className="w-px h-8 bg-gray-300 mx-4" />
-              <BellIcon className="w-6 h-6 text-gray-700 cursor-pointer ml-4" />
+             <div className="relative ml-4">
+  <BellIcon
+  className="w-6 h-6 text-gray-700 cursor-pointer"
+  onClick={async () => {
+    setShowNotifications(!showNotifications);
+
+    for (const n of notifications) {
+      if (!n.read) {
+        await updateDoc(doc(db, "notifications", n.id), {
+          read: true
+        });
+      }
+    }
+  }}
+/>
+
+  {unreadCount > 0 && (
+    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+      {unreadCount}
+    </span>
+  )}
+{showNotifications && (
+  <div className="absolute right-0 mt-3 w-80 bg-white shadow-xl rounded-xl p-4 z-50 max-h-96 overflow-y-auto border">
+
+    <h4 className="font-semibold mb-3">Notifications</h4>
+
+    {notifications.length === 0 ? (
+      <p className="text-sm text-gray-500">No notifications</p>
+    ) : (
+      notifications.map((note, index) => (
+        <div
+          key={index}
+          className={`p-3 rounded-lg mb-2 border transition 
+          ${note.read ? "bg-gray-50" : "bg-blue-50 border-blue-300"}`}
+        >
+          <div className="flex justify-between items-start">
+
+            <p className="text-sm font-medium">
+              {note.message}
+            </p>
+
+            {!note.read && (
+              <span className="w-2 h-2 bg-blue-600 rounded-full mt-2"></span>
+            )}
+
+          </div>
+
+          <p className="text-xs text-gray-400 mt-1">
+          {note.createdAt?.toDate().toLocaleString()}
+          </p>
+        </div>
+      ))
+    )}
+
+  </div>
+)}
+</div>
             </div>
           </div>
 
@@ -436,7 +931,7 @@ useEffect(() => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               <StatCard title="Pending KYC" value={stats.pendingKYC} subtitle="Needs verification" gradientClass="bg-gradient-to-br from-yellow-400 to-orange-500 shadow-md hover:-translate-y-1 transition" />
               <StatCard title="Active Bookings" value={stats.activeBookings} subtitle="Currently ongoing" gradientClass="bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md hover:-translate-y-1 transition" />
-              <StatCard title="Disputes" value={stats.disputes} subtitle="Needs resolution" gradientClass="bg-gradient-to-br from-red-500 to-red-600 shadow-md hover:-translate-y-1 transition" />
+              <StatCard title="Pending Disputes" value={stats.pendingDisputes} subtitle="Needs resolution" gradientClass="bg-gradient-to-br from-red-500 to-red-600 shadow-md hover:-translate-y-1 transition" />
               <StatCard title="Pending Payments" value={stats.pendingPayments} subtitle="Ready to release" gradientClass="bg-gradient-to-br from-orange-400 to-red-500 shadow-md hover:-translate-y-1 transition" />
             </div>
 
@@ -447,7 +942,7 @@ useEffect(() => {
                data={monthlyBookings}
             />
 
-              <QuickInsights />
+              <QuickInsights stats={stats} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
@@ -504,8 +999,8 @@ useEffect(() => {
                       <span>{stats.pendingKYC}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-sm text-blue-100">Active Disputes</span>
-                      <span>{stats.disputes}</span>
+                      <span className="text-sm text-blue-100">Approved Disputes</span>
+                      <span>{stats.approvedDisputes}</span> 
                     </div>
                   </div>
                 </CardContent>

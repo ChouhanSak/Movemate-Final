@@ -1,5 +1,5 @@
 import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
-import { db } from "../../Firebase";
+import { db } from "../../firebase";
 import { useEffect, useState, useRef } from "react";
 
 export default function AgencyNotifications({ agencyId }) {

@@ -1,8 +1,8 @@
-// src/pages/customer/NewBooking.jsx
 import React, { useState, useEffect,useRef } from "react";
-import { db } from "../../Firebase";
-import { collection, addDoc, serverTimestamp, query, onSnapshot } from "firebase/firestore";
-import { auth } from "../../Firebase";
+import { db } from "../../firebase";
+import { collection, addDoc, serverTimestamp, query, onSnapshot, where, getDocs } from "firebase/firestore";
+import { auth } from "../../firebase";
+import { orderBy } from "firebase/firestore";
 import { getCoordinates } from "../../utils/osmUtils";
 import { calculateDistance } from "../../utils/distanceUtils";
 import { doc, getDoc } from "firebase/firestore";
@@ -38,7 +38,15 @@ function StepIndicator({ step }) {
 }
 
 export default function NewBooking() {
+  const [user, setUser] = useState(null);
+  const cityCache = useRef({});
+  useEffect(() => {
+    setUser(auth.currentUser);
+  }, []);
+
+
   const [step, setStep] = useState(1);
+  const [bookingLoading, setBookingLoading] = useState(false);
 const [sortedAgencies, setSortedAgencies] = useState([]);
   // STEP 1 - Pickup & Drop
   const [street, setStreet] = useState("");
@@ -55,10 +63,32 @@ const [kycStatus, setKycStatus] = useState("");
 const [pickupQuery, setPickupQuery] = useState("");
 const [pickupSuggestions, setPickupSuggestions] = useState([]);
 const [dropQuery, setDropQuery] = useState("");
+const [showReviews, setShowReviews] = useState(false);
+const [selectedAgencyForReview, setSelectedAgencyForReview] = useState(null);
+const [agencyReviews, setAgencyReviews] = useState([]);
 const [dropSuggestions, setDropSuggestions] = useState([]);
 const pickupRef = useRef(null);
+const hasCalculated = useRef(false);
 // INPUT VALIDATIONS (STEP 3)
 
+const debounce = (func, delay) => {
+  let timeout;
+  return (...args) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), delay);
+  };
+};
+const fetchSuggestions = async (query) => {
+  if (!query || query.length < 3) return; //  important
+
+  try {
+    const res = await searchAddress(query);
+    setPickupSuggestions(res);
+  } catch (e) {
+    console.error(e);
+  }
+};
+const debouncedFetch = useRef(debounce(fetchSuggestions, 800)).current;
 const handleCustomerNameChange = (e) => {
   const value = e.target.value;
   if (/^[a-zA-Z\s]*$/.test(value)) {
@@ -91,22 +121,7 @@ useEffect(() => {
     document.removeEventListener("mousedown", handleClickOutside);
   };
 }, []);
-// useEffect(() => {
-//   const delay = setTimeout(async () => {
-//     const results = await searchAddress(pickupQuery);
-//     setPickupSuggestions(results);
-//   }, 400); // debounce
 
-//   return () => clearTimeout(delay);
-// }, [pickupQuery]);
-// useEffect(() => {
-//   const delay = setTimeout(async () => {
-//     const results = await searchAddress(dropQuery);
-//     setDropSuggestions(results);
-//   }, 400);
-
-//   return () => clearTimeout(delay);
-// }, [dropQuery]);
 useEffect(() => {
   const fetchKyc = async () => {
     if (!auth.currentUser) return;
@@ -132,51 +147,57 @@ const isSameAddress = () => {
 };
 
 useEffect(() => {
-  if (step !== 4) return;
-  if (distance) return; // already calculated
+  if (step !== 4) {
+    setDistance(null);
+  }
+}, [step]);
+useEffect(() => {
+  if (step !== 4 || hasCalculated.current) return;
+
+  hasCalculated.current = true;
+
+  if (isSameAddress()) {
+    setDistance(3);
+    setDistanceLoading(false);
+    return;
+  }
 
   const calcDistance = async () => {
     try {
       setDistanceLoading(true);
 
-      let start, end;
-
-      if (city.toLowerCase() === dropCity.toLowerCase()) {
-        // Same city → use full street-level address
-        start = await getCoordinates(`${street}, ${city}, ${stateName}`);
-        end = await getCoordinates(`${dropStreet}, ${dropCity}, ${dropStateName}`);
-      } else {
-        // Different city → use city-level for reliability
-        start = await getCoordinates(`${city}, ${stateName}`);
-        end = await getCoordinates(`${dropCity}, ${dropStateName}`);
-      }
-
-      // If street-level fails, fallback to city-level
-      if (!start || !end) {
-        console.warn("Street-level geocoding failed, using city-level fallback");
-        start = await getCoordinates(`${city}, ${stateName}`);
-        end = await getCoordinates(`${dropCity}, ${dropStateName}`);
-      }
+      let start = await getCoordinates(`${city}, ${stateName}`);
+      let end = await getCoordinates(`${dropCity}, ${dropStateName}`);
 
       let km = 0;
+
       if (start && end) {
         km = await calculateDistance(start, end);
-        if (km < 0.5) km = 3; // minimum distance
       }
 
-      setDistance(Number(km.toFixed(2)));
+      const distanceValue = parseFloat(km);
+
+      // ✅ FINAL SAFE LINE
+      setDistance(distanceValue < 0.5 ? 3 : distanceValue || 5);
+
     } catch (e) {
-      console.error("Distance calculation failed:", e);
-      setDistance(null); // fallback message will show
+      console.error("Distance error:", e);
+
+      // ✅ NEVER FAIL
+      setDistance(5);
     } finally {
       setDistanceLoading(false);
     }
   };
 
   calcDistance();
-}, [step, street, city, stateName, dropStreet, dropCity, dropStateName]);
-
-
+}, [step]);
+useEffect(() => {
+  if (step !== 4) {
+    hasCalculated.current = false;
+    setDistance(null);
+  }
+}, [step]);
   // STEP 2 - Agencies
 const [selectedAgency, setSelectedAgency] = useState(null);
 const [agencies, setAgencies] = useState([]);
@@ -233,7 +254,7 @@ const minDate = `${yyyy}-${mm}-${dd}`; // YYYY-MM-DD format
     ratePerKm: d.data().perKmRate || 10,
     kycStatus: d.data().kyc?.status || "NOT_SUBMITTED",
   }))
-  .filter(a => a.kycStatus !== "MANUAL_REVIEW"); //  filter out manual review agencies
+  .filter(a => a.kycStatus !== "MANUAL_REVIEW" && a.kycStatus.toUpperCase() !== "BLOCKED"); //  filter out manual review agencies
 
       setAgencies(allAgencies);
       setLoadingAgencies(false); //  spinner band
@@ -255,20 +276,30 @@ useEffect(() => {
 
     try {
       const userLoc = await getCoordinates(`${city}, ${stateName}`);
+      const limitedAgencies = agencies.slice(0, 10);
+      const agenciesWithDistance = [];
 
-      const agenciesWithDistance = await Promise.all(
-        agencies.map(async (a) => {
-          const agencyLoc = await getCoordinates(`${a.city}`);
-          let km = Infinity;
+const uniqueCities = [...new Set(agencies.map(a => a.city))];
 
-          if (userLoc && agencyLoc) {
-            km = await calculateDistance(userLoc, agencyLoc);
-          }
+// STEP 1: fetch all cities ONCE
+for (const cityName of uniqueCities) {
+  if (!cityCache.current[cityName]) {
+    cityCache.current[cityName] = await getCoordinates(cityName);
+    await new Promise(res => setTimeout(res, 1200)); // only here
+  }
+}
 
-          return { ...a, distanceFromUser: km };
-        })
-      );
+// STEP 2: calculate distance without extra geocode calls
+for (const a of limitedAgencies) {
+  const agencyLoc = cityCache.current[a.city];
+  let km = Infinity;
 
+  if (userLoc && agencyLoc) {
+    km = await calculateDistance(userLoc, agencyLoc);
+  }
+
+  agenciesWithDistance.push({ ...a, distanceFromUser: km });
+}
       agenciesWithDistance.sort(
         (a, b) => a.distanceFromUser - b.distanceFromUser
       );
@@ -287,11 +318,49 @@ useEffect(() => {
     const digits = value.replace(/\D/g, "");
     if (digits.length <= max) setter(digits);
   };
+ const handlePincodeChange = (e) => {
+  const value = e.target.value.replace(/\D/g, "");
 
+  // block any pincode starting with 0
+  if (value.startsWith("0")) {
+    alert("Pincode cannot start with 0");
+    return;
+  }
+
+  if (value.length <= 6) {
+    setPincode(value);
+  }
+};
+// PHONE VALIDATION
+const handlePhoneChange = (e) => {
+  const value = e.target.value.replace(/\D/g, "");
+
+  // block numbers not starting with 6-9
+  if (value.length > 0 && !/^[6-9]/.test(value)) {
+    alert("Phone number must start with 6-9");
+    return;
+  }
+
+  if (value.length <= 10) {
+    setPhone(value);
+  }
+};
+  // Valid Indian pincode (cannot start with 0)
+const isValidPincode = (pin) => /^[1-9][0-9]{5}$/.test(pin);
+// Valid Indian phone (must start with 6-9)
+const isValidPhone = (num) => /^[6-9][0-9]{9}$/.test(num);
   // Step 1 Validation
-  const isStep1Valid = street && city && stateName &&
-                       dropStreet && dropCity && dropStateName &&
-                       pincode.length === 6 && phone.length === 10;
+  const isStep1Valid =
+  street &&
+  city &&
+  stateName &&
+  dropStreet &&
+  dropCity &&
+  dropStateName &&
+  pincode.length === 6 &&
+  phone.length === 10 &&
+  isValidPincode(pincode) &&
+  isValidPhone(phone);
 
   // Combined pickup/drop addresses for summary
   const pickupAddress = `${street}, ${city}, ${stateName}`;
@@ -299,22 +368,15 @@ useEffect(() => {
 
   // Firestore Save
 const handleConfirmBooking = async () => {
-//   if (kycStatus !== "VERIFIED" && kycStatus !== "AUTO_VERIFIED") {
-//   Swal.fire({
-//     icon: "warning",
-//     title: "KYC Not Verified",
-//     text: "You cannot place a booking until your KYC is verified.",
-//   });
-//   return;
-// }
+
   if (!selectedAgency) {
     alert("Please select an agency");
     return;
   }
-  if (!distance || distance === "N/A") {
-    alert("Distance is still calculating, please wait");
-    return;
-  }
+  if (distance === null || distanceLoading) {
+  alert("Distance is still calculating, please wait");
+  return;
+}
 if (
   street.trim().toLowerCase() === dropStreet.trim().toLowerCase() &&
   city.trim().toLowerCase() === dropCity.trim().toLowerCase() &&
@@ -324,6 +386,7 @@ if (
   return;
 }
   try {
+    setBookingLoading(true);
     // 1 Create booking
     const bookingRef = await addDoc(collection(db, "bookings"), {
       customerId: auth.currentUser.uid,
@@ -378,8 +441,26 @@ setAgreed(false);
     } catch (error) {
       console.error(error);
       alert("❌ Booking failed");
+    }finally {
+    setBookingLoading(false);
     }
   };
+ const fetchAgencyReviews = async (agencyId) => {
+  try {
+     const q = query(
+      collection(db, "ratings"),
+      where("agencyId", "==", agencyId)
+    );
+    const snap = await getDocs(q);
+    const reviews = snap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    setAgencyReviews(reviews);
+  } catch (error) {
+    console.error("Error fetching reviews:", error);
+  }
+};
 const filteredAgencies = sortedAgencies.filter(a => {
   const userState = stateName.trim().toLowerCase();
   const agencyState = (a.state || "").trim().toLowerCase();
@@ -388,6 +469,7 @@ const filteredAgencies = sortedAgencies.filter(a => {
 
   return agencyState === userState;
 });
+if (!user) return <div>Loading...</div>;
   return (
     <div className="max-w-7xl mx-auto bg-white p-6 rounded shadow pb-20">
 
@@ -409,8 +491,9 @@ const filteredAgencies = sortedAgencies.filter(a => {
     placeholder="Street / Area / Landmark"
     value={street}
     onChange={(e) => {
+      const val = e.target.value;
       setStreet(e.target.value);
-      setPickupQuery(e.target.value); // triggers suggestions
+      debouncedFetch(val); // triggers suggestions
     }}
   />
 
@@ -430,28 +513,7 @@ const filteredAgencies = sortedAgencies.filter(a => {
     onChange={(e) => setStateName(e.target.value)} // now user can type
   />
 
-  {/* Suggestions dropdown */}
-  {/* {pickupSuggestions.length > 0 && (
-    <div className="absolute top-full left-0 right-0 border rounded bg-white shadow max-h-48 overflow-y-auto z-50">
-      {pickupSuggestions.map((s, i) => (
-        <div
-          key={i}
-          className="px-3 py-2 hover:bg-purple-100 cursor-pointer text-sm"
-          onClick={() => {
-            // Auto-fill street, city, state
-            setStreet(s.address.road || "");
-            setCity(s.address.city || s.address.town || "");
-            setStateName(s.address.state || "");
-            // Clear query and suggestions
-            setPickupQuery("");
-            setPickupSuggestions([]);
-          }}
-        >
-          {s.label}
-        </div>
-      ))}
-    </div>
-  )} */}
+  
 </div>
 
 {/* Drop Address */}
@@ -509,22 +571,26 @@ const filteredAgencies = sortedAgencies.filter(a => {
 </div>
             <div>
               <label className="block text-sm font-medium mb-1">6-digit Pincode</label>
-              <input className="border px-3 py-2 rounded w-full" placeholder="Enter pincode" value={pincode} onChange={e => setDigitsMax(setPincode, e.target.value, 6)} />
+              <input className="border px-3 py-2 rounded w-full" placeholder="Enter pincode" value={pincode} onChange={handlePincodeChange} />
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-1">10-digit Phone</label>
-              <input className="border px-3 py-2 rounded w-full" placeholder="Enter phone number" value={phone} onChange={e => setDigitsMax(setPhone, e.target.value, 10)} />
+              <input className="border px-3 py-2 rounded w-full" placeholder="Enter phone number" value={phone} onChange={handlePhoneChange} />
             </div>
           </div>
 
           <button
   className="mt-8 px-6 py-2 bg-purple-600 text-white rounded"
   onClick={() => {
-    if (!isStep1Valid) {
-      alert("Fill all details correctly");
-      return;
-    }
+   if (pincode.length !== 6 || !isValidPincode(pincode)) {
+  alert("Enter a valid 6-digit Indian pincode");
+  return;
+}
+if (phone.length !== 10 || !isValidPhone(phone)) {
+  alert("Enter a valid 10-digit Indian phone number starting with 6-9");
+  return;
+}
 
     if (isSameAddress()) {
       alert("❌ Pickup and Drop address cannot be the same");
@@ -587,9 +653,25 @@ const filteredAgencies = sortedAgencies.filter(a => {
                     <p className="text-sm text-gray-500">
                     📞 {a.phone}
                      </p>
-                    <p className="text-yellow-500">
-  ⭐ {a.rating > 0 ? a.rating.toFixed(1) : "No ratings yet"}
-</p>
+                   <div className="flex items-center gap-4 text-sm">
+
+        <p className="text-yellow-500">
+          ⭐ {a.rating > 0 ? a.rating.toFixed(1) : "No ratings yet"}
+        </p>
+
+        <button
+  className="flex items-center gap-1 text-blue-700 hover:text-blue-900 hover:underline font-medium"
+          onClick={(e) => {
+            e.stopPropagation(); // prevents selecting agency
+            setSelectedAgencyForReview(a);
+            fetchAgencyReviews(a.uid);
+            setShowReviews(true);
+          }}
+        >
+         <span className="text-blue-700">💬</span> Reviews
+        </button>
+
+      </div>
                   </div>
                   <div className="text-green-600 font-medium text-lg">
                     ₹{a.ratePerKm} / km
@@ -731,14 +813,14 @@ const filteredAgencies = sortedAgencies.filter(a => {
       <p>
   <b>Total Distance:</b>{" "}
   {distanceLoading ? (
-    <span className="text-gray-400">Calculating...</span>
-  ) : (
-    <span className="text-purple-600 font-semibold">
-      {distance && distance !== "N/A"
-        ? `${distance} km`
-        : "Agency will confirm distance"}
-    </span>
-  )}
+  <span className="text-gray-400">Calculating...</span>
+) : distance !== null && !isNaN(distance) ? (
+  <span className="text-purple-600 font-semibold">
+    {distance} km
+  </span>
+) : (
+  "Calculating distance..."
+)}
 </p>
 
     </div>
@@ -773,12 +855,47 @@ const filteredAgencies = sortedAgencies.filter(a => {
         onClick={handleConfirmBooking}
         
       >
-        Confirm Booking
+        {bookingLoading ? "Confirming..." : "Confirm Booking"}
       </button>
     </div>
   </>
 )}
+{/* REVIEWS MODAL */}
+{showReviews && (
+<div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg w-[500px] max-h-[80vh] overflow-y-auto shadow-lg">
 
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-semibold">
+          Reviews for {selectedAgencyForReview?.name}
+        </h3>
+
+        <button
+          onClick={() => setShowReviews(false)}
+          className="text-gray-500 hover:text-black"
+        >
+          ✕
+        </button>
+      </div>
+
+     {agencyReviews.length === 0 ? (
+  <p className="text-gray-500 text-sm">No reviews yet</p>
+) : (
+  <div>
+<div className="space-y-3">
+   {agencyReviews
+  .filter((r) => r.comment && r.comment.trim() !== "")
+  .map((r) => (    
+       <div key={r.id} className="border border-gray-200 p-3 rounded-md bg-gray-50 text-sm text-gray-700">
+        {r.comment}
+      </div>
+    ))}
+  </div>
+  </div>
+)}
     </div>
-  );
+  </div>
+)}
+  </div>
+);
 }

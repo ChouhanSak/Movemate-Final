@@ -16,10 +16,40 @@ import Swal from "sweetalert2";
 export default function AssignBookingModal({ open, booking, onClose }) {
   const [vehicles, setVehicles] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState("");
+  const [drivers, setDrivers] = useState([]);
+const [selectedDriver, setSelectedDriver] = useState("");
   const [driverName, setDriverName] = useState("");
   const [driverPhone, setDriverPhone] = useState("");
 const [step, setStep] = useState(1); // 1 = assign driver/vehicle, 2 = price
   // Fetch available vehicles when modal opens
+  useEffect(() => {
+  if (open) {
+    setSelectedDriver("");
+    setSelectedVehicle("");
+    setDriverName("");
+    setDriverPhone("");
+  }
+}, [open]);
+  useEffect(() => {
+  if (!open || !auth.currentUser) return;
+
+  const q = query(
+    collection(db, "drivers"),
+    where("agencyId", "==", auth.currentUser.uid),
+    where("status", "==", "Available")
+  );
+
+  const unsub = onSnapshot(q, (snap) => {
+    const list = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    }));
+    setDrivers(list);
+  });
+
+  return () => unsub();
+}, [open]);
+
   useEffect(() => {
     if (!open || !auth.currentUser) return;
 
@@ -57,14 +87,14 @@ if (!customerSnap.exists()) {
 const customerEmail = customerSnap.data().email;
 console.log("FINAL CUSTOMER EMAIL 👉", customerEmail);
 
-    if (!driverName || !driverPhone || !selectedVehicle) {
-      Swal.fire({
-        icon: "warning",
-        title: "Missing Details",
-        text: "Please fill driver name, phone number and select a vehicle",
-      });
-      return;
-    }
+    if (!selectedDriver || !selectedVehicle) {
+  Swal.fire({
+    icon: "warning",
+    title: "Missing Details",
+    text: "Please select driver and vehicle",
+  });
+  return;
+}
 
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(driverPhone)) {
@@ -78,13 +108,24 @@ console.log("FINAL CUSTOMER EMAIL 👉", customerEmail);
 
     try {
       // Update booking
-      await updateDoc(doc(db, "bookings", booking.id), {
-        status: "BOOKING_PLACED",
-        vehicleId: selectedVehicle,
-        driverName,
-        driverPhone,
-        assignedAt: serverTimestamp(),
-      });
+//       await updateDoc(doc(db, "bookings", booking.id), {
+//   status: "BOOKING_PLACED",
+//   vehicleId: selectedVehicle,
+
+//   driverId: selectedDriver,
+//   driverName: driverName,
+//   driverPhone: driverPhone,
+
+//   assignedAt: serverTimestamp(),
+// });
+await updateDoc(doc(db, "bookings", booking.id), {
+  status: "BOOKING_PLACED",
+  vehicleId: selectedVehicle,
+  driverId: selectedDriver,
+  assignedAt: serverTimestamp(),
+
+  customerEmail: customerEmail
+});
        await addDoc(collection(db, "notifications"), {
   userType: "customer",
   userId: booking.customerId,
@@ -99,6 +140,9 @@ console.log("FINAL CUSTOMER EMAIL 👉", customerEmail);
       await updateDoc(doc(db, "vehicles", selectedVehicle), {
         status: "Not Available",
       });
+      await updateDoc(doc(db, "drivers", selectedDriver), {
+  status: "Not Available",
+});
 console.log("BOOKING 👉", booking);
 console.log("CUSTOMER ID 👉", booking.customerId);
 console.log("FETCHING DRIVER ASSIGN EMAIL...");
@@ -152,27 +196,34 @@ if (!res.ok) {
 
         {/* Driver Info */}
         <div className="mb-4">
-          <label className="text-sm font-medium text-gray-600">
-            Driver Name
-          </label>
-          <input
-            value={driverName}
-            onChange={(e) => setDriverName(e.target.value)}
-            placeholder="Driver name"
-            className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
-          />
+  <label className="text-sm font-medium text-gray-600">
+    Select Driver
+  </label>
 
-          <label className="text-sm font-medium text-gray-600 mt-3 block">
-            Driver Phone
-          </label>
-          <input
-            value={driverPhone}
-            onChange={(e) => setDriverPhone(e.target.value)}
-            placeholder="Driver phone number"
-            type="tel"
-            className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
+  <select
+    value={selectedDriver}
+    onChange={(e) => {
+      const driverId = e.target.value;
+      setSelectedDriver(driverId);
+
+      const driver = drivers.find((d) => d.id === driverId);
+
+      if (driver) {
+        setDriverName(driver.driverName);
+        setDriverPhone(driver.phone);
+      }
+    }}
+    className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+  >
+    <option value="">Select driver</option>
+
+    {drivers.map((d) => (
+      <option key={d.id} value={d.id}>
+        {d.driverName} • {d.phone}
+      </option>
+    ))}
+  </select>
+</div>
 
         {/* Vehicle */}
         <div className="mb-4">

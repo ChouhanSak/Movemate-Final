@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Phone, Mail, Headset } from "lucide-react";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "../Firebase";
+import { db } from "../firebase";
 import Swal from "sweetalert2";
 
 
@@ -271,9 +271,12 @@ const handleSubmit = async (e) => {
   <h2 className="text-xl font-semibold">Call Us</h2>
   <p className="text-gray-500 mt-1 text-sm">24/7 Helpline - Immediate Response</p>
   <p className="text-green-600 font-medium mt-2 text-lg">+91 1800-XXX-XXXX</p>
-  <button className="mt-4 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
-    Call Now
-  </button>
+  <a
+  href="tel:+911800XXXXXXX"
+  className="mt-4 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 inline-block text-center"
+>
+  Call Now
+</a>
 </div>
 
 {/* Email Us */}
@@ -284,10 +287,15 @@ const handleSubmit = async (e) => {
 </div>
   <h2 className="text-xl font-semibold">Email Us</h2>
   <p className="text-gray-500 mt-1 text-sm">Response within 24 hours</p>
-  <p className="text-blue-600 font-medium mt-2 text-lg">support@movemate.com</p>
-  <button className="mt-4 px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded hover:opacity-90">
-    Send Email
-  </button>
+  <p className="text-blue-600 font-medium mt-2 text-lg">movemate.logistics02@gmail.com</p>
+ <a
+  href="https://mail.google.com/mail/?view=cm&fs=1&to=movemate.logistics02@gmail.com&su=Support%20Request&body=Hi%2C%20I%20need%20help..."
+  target="_blank"
+  rel="noopener noreferrer"
+  className="mt-4 px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded hover:opacity-90 inline-block text-center"
+>
+  Send Email
+</a>
 </div>
 
         </div>

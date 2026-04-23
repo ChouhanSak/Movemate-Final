@@ -4,7 +4,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Edit } from "lucide-react"
-import { auth, db } from "../../Firebase";
+import { auth, db } from "../../firebase";
 import {
   doc,
   getDoc,
@@ -20,33 +20,16 @@ import {
 import { useEffect } from "react";
 export default function CustomerSettings({ userData = {} }) {
   const [isEditing, setIsEditing] = useState(false);
-  const [showAddressModal, setShowAddressModal] = useState(false);
   const [originalProfile, setOriginalProfile] = useState(null);
   const [passwordError, setPasswordError] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState("");
   const [showConfirm, setShowConfirm] = useState(false);
-
-const [addresses, setAddresses] = useState([
-  {
-    line: "Flat 101, Sunrise Apartments",
-    city: "Mumbai",
-    state: "Maharashtra",
-    pincode: "400001",
-  },
-  {
-    line: "House 23, Green Park Colony",
-    city: "Delhi",
-    state: "Delhi",
-    pincode: "110016",
-  },
-]);
-  const [editingIndex, setEditingIndex] = useState(null);
-  const [addressForm, setAddressForm] = useState({
-    line: "",
-    city: "",
-    state: "",
-    pincode: "",
-  });
+  const [address, setAddress] = useState({
+  line: "",
+  city: "",
+  state: "",
+  pincode: "",
+});
   const [passwords, setPasswords] = useState({
   current: "",
   new: "",
@@ -63,14 +46,23 @@ useEffect(() => {
 
     const ref = doc(db, "customers", user.uid);
     const snap = await getDoc(ref);
+if (snap.exists()) {
+  const data = snap.data();
 
-    if (snap.exists()) {
   setProfile({
-    fullName: snap.data().fullName || "",
-    email: snap.data().email || user.email,
-    phone: snap.data().phone || "",
+    fullName: data.fullName || "",
+    email: data.email || user.email,
+    phone: data.phone || "",
   });
-} else {
+
+  setAddress({
+    line: data.address || "",
+    city: data.city || "",
+    state: data.state || "",
+    pincode: data.pincode || "",
+  });
+}
+ else {
       await setDoc(ref, {
         fullName: user.displayName || "",
         email: user.email,
@@ -240,41 +232,29 @@ const handlePasswordUpdate = async () => {
 
         </CardContent>
       </Card>
-      {/* ADDRESS SECTION */}
-        <Card>
-        <CardContent className="p-6 space-y-4">
-            <h2 className="text-xl font-semibold flex items-center gap-2">
-             Address
-            </h2>
+      {/* ADDRESS */}
+<Card>
+  <CardContent className="p-6 space-y-4">
+    <h2 className="text-xl font-semibold">Address</h2>
 
-            {addresses.map((addr, index) => (
-            <div
-              key={index}
-              className="flex justify-between items-center p-4 rounded-xl bg-gradient-to-r from-blue-50 to-purple-50 border"
-            >
-              <div>
-                <p className="font-medium">{addr.line}</p>
-                <p className="text-sm text-gray-600">
-                  {addr.city}, {addr.state} - {addr.pincode}
-                </p>
-              </div>
+    <div className="p-4 rounded-xl bg-gradient-to-r from-blue-50 to-purple-50 border">
+      {address.line ? (
+        <>
+          <p className="font-medium">{address.line}</p>
+          <p className="text-sm text-gray-600">
+            {address.city}, {address.state} - {address.pincode}
+          </p>
+        </>
+      ) : (
+        <p className="text-gray-500">No address found</p>
+      )}
+    </div>
 
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setEditingIndex(index);
-                  setAddressForm(addr);
-                  setShowAddressModal(true);
-                }}
-              >
-                Edit
-              </Button>
-            </div>
-          ))}
-        </CardContent>
-        </Card>
-
-
+    <p className="text-sm text-gray-400">
+     Initial address at the time of registration.
+    </p>
+  </CardContent>
+</Card>
       {/* SECURITY */}
       <Card>
   <CardContent className="p-6 space-y-4">
@@ -340,96 +320,6 @@ const handlePasswordUpdate = async () => {
     </Button>
   </CardContent>
 </Card>
-      {/* EDIT ADDRESS MODAL */}
-        {showAddressModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-            <div className="bg-white rounded-2xl w-full max-w-lg p-6 relative">
-
-            {/* Close Button */}
-            <button
-                className="absolute top-4 right-4 text-gray-500"
-                onClick={() => {
-                setAddressForm({ line: "", city: "", state: "", pincode: "" });
-                setEditingIndex(null);
-                setShowAddressModal(false);
-              }}
-
-            >
-                ✕
-            </button>
-
-            <h2 className="text-2xl font-semibold text-purple-600 mb-4">
-                Edit Address
-            </h2>
-
-            {/* Address Line */}
-            <div className="mb-4">
-                <Label>Address Line</Label>
-                <Input
-                  className="!border !border-gray-300 rounded-lg bg-white !ring-0 focus:!border-gray-400"
-                value={addressForm.line}
-                onChange={(e) =>
-                    setAddressForm({ ...addressForm, line: e.target.value })
-                }
-                />
-
-
-            </div>
-
-            {/* City & State */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                <Label>City</Label>
-                <Input
-                      className="!border !border-gray-300 rounded-lg bg-white !ring-0 focus:!border-gray-400"
-                    value={addressForm.city}
-                    onChange={(e) =>
-                        setAddressForm({ ...addressForm, city: e.target.value })
-                    }
-/>
-
-                </div>
-
-                <div>
-                <Label>State</Label>
-                <Input
-                      className="!border !border-gray-300 rounded-lg bg-white !ring-0 focus:!border-gray-400"
-                    value={addressForm.state}
-                    onChange={(e) =>
-                    setAddressForm({ ...addressForm, state: e.target.value })
-                    }
-                />
-                </div>
-            </div>
-
-            {/* Pincode */}
-            <div className="mb-6">
-                <Label>Pincode</Label>
-                <Input
-                className="!border !border-gray-300 rounded-lg bg-white !ring-0 focus:!border-gray-400"
-                value={addressForm.pincode}
-                onChange={(e) =>
-                    setAddressForm({ ...addressForm, pincode: e.target.value })
-                }
-                />
-            </div>
-
-            {/* Buttons */}
-            <div className="flex justify-end gap-3">
-                <Button variant="outline" onClick={() => setShowAddressModal(false)}>
-                Cancel
-                </Button>
-                <Button
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 text-white"
-                  onClick={handleUpdateAddress}
-                >
-                  Update Address
-                </Button>
-
-            </div>
-            </div>
-        </div>
-        )}
     </div>
   );
 }

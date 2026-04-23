@@ -10,7 +10,8 @@ import {
   doc,
   getDoc,
 } from "firebase/firestore";
-
+import { useNavigate } from "react-router-dom";
+import { addDoc } from "firebase/firestore";
 import { auth, db } from "../../firebase";
 import { MapPin, Package, Box, Cpu, Truck } from "lucide-react";
 import Swal from "sweetalert2";
@@ -20,9 +21,10 @@ import PaymentModal from "./PaymentModal";
 export default function AllBookings() {
   const [bookings, setBookings] = useState([]);
   const currentUserId = auth.currentUser?.uid;
-
+  const navigate = useNavigate();
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [vehicleData, setVehicleData] = useState(null);
+  const [driverData, setDriverData] = useState(null);
   const [isOpen, setIsOpen] = useState(false);
   const [vehiclesMap, setVehiclesMap] = useState({});
 
@@ -35,7 +37,25 @@ export default function AllBookings() {
   //  Per-booking photo state
   const [bookingPhotos, setBookingPhotos] = useState({});
 const [bookingConfirmed, setBookingConfirmed] = useState({});
+const checkAndExpireBookings = async (bookingsList) => {
+    for (let b of bookingsList) {
+      if (
+        b.status === "PAYMENT_PENDING" &&
+        isPaymentExpired(b.priceSetAt)
+      ) {
+        try {
+          await updateDoc(doc(db, "bookings", b.id), {
+            status: "BOOKING_EXPIRED",
+            expiredAt: serverTimestamp(),
+          });
 
+          console.log("Expired:", b.id);
+        } catch (err) {
+          console.error("Expire error:", err);
+        }
+      }
+    }
+  };
   // ================= FETCH BOOKINGS =================
   useEffect(() => {
     if (!currentUserId) return;
@@ -51,7 +71,7 @@ const [bookingConfirmed, setBookingConfirmed] = useState({});
         ...d.data(),
       }));
       setBookings(data);
-
+      checkAndExpireBookings(data);
       const vehicleIds = data.map((b) => b.vehicleId).filter(Boolean);
 
       const vehicleDocs = await Promise.all(
@@ -73,7 +93,12 @@ const [bookingConfirmed, setBookingConfirmed] = useState({});
 
   // ================= STATUS COLORS =================
   const STATUS_COLORS = {
+    CANCELLED: {
+  badge: "bg-red-100 text-red-700",
+  card: "bg-red-50 border-red-300"
+  },
     BOOKING_PLACED: { badge: "bg-indigo-100 text-indigo-700", card: "bg-indigo-50 border-indigo-300" },
+     BOOKING_EXPIRED: { badge: "bg-red-200 text-red-800", card: "bg-red-50 border-red-400" },
     IN_TRANSIT: { badge: "bg-blue-100 text-blue-700", card: "bg-blue-50 border-blue-300" },
     COMPLETED: { badge: "bg-green-100 text-green-700", card: "bg-green-50 border-green-300" },
     PAYMENT_PENDING: { badge: "bg-orange-100 text-orange-700", card: "bg-orange-50 border-orange-300" },
@@ -89,7 +114,17 @@ const [bookingConfirmed, setBookingConfirmed] = useState({});
 
   const formatStatus = (status) =>
     status ? status.replaceAll("_", " ") : "";
+  
+  // ===== PAYMENT EXPIRE CHECK =====
+function isPaymentExpired(priceSetAt) {
+  if (!priceSetAt) return false;
 
+  const expiryTime = 1000 * 60 * 60 * 5; // 5 hours
+  const now = new Date().getTime();
+  const priceTime = priceSetAt.toDate().getTime();
+
+  return now - priceTime > expiryTime;
+}
   // ---------------- CLOUDINARY UPLOAD ----------------
 const uploadToCloudinary = async (file) => {
   const formData = new FormData();
@@ -114,17 +149,25 @@ const uploadToCloudinary = async (file) => {
 };
 
   // ================= CONFIRM PAYMENT =================
-// ================= CONFIRM PAYMENT =================
 const confirmPayment = async (bookingId) => {
   try {
     const bookingRef = doc(db, "bookings", bookingId);
+
+    // ===== DUPLICATE PAYMENT CHECK =====
+    const bookingSnap = await getDoc(bookingRef);
+    const bookingData = bookingSnap.data();
+
+    if (bookingData?.paidAt) {
+      Swal.fire("Already Paid", "Payment already completed", "info");
+      return;
+    }
 
     const selectedPhotos = bookingPhotos[bookingId];
     const confirmed = bookingConfirmed[bookingId];
 
     let photoUrls = [];
 
-    // 🔹 Upload photos to Cloudinary (if any)
+    // Upload photos
     if (selectedPhotos && selectedPhotos.length > 0) {
       for (let file of selectedPhotos) {
         const url = await uploadToCloudinary(file);
@@ -132,21 +175,34 @@ const confirmPayment = async (bookingId) => {
       }
     }
 
-    // 🔹 Update booking document
+    // Update booking
     await updateDoc(bookingRef, {
       status: "PAYMENT_CONFIRMED",
       paidAt: serverTimestamp(),
-      customerPhotos: photoUrls,   // array of Cloudinary URLs
+      customerPhotos: photoUrls,
       photoConfirmed: confirmed || false,
+      canRaiseDispute: photoUrls.length > 0,
     });
 
+    // ===== CREATE PAYMENT ENTRY =====
+    await addDoc(collection(db, "payments"), {
+  bookingId: bookingId,
+  customerId: bookingData.customerId,
+  agencyId: bookingData.agencyId,
+  amount: bookingData.price,
+  paymentMethod: "online",
+
+  paymentStatus: "holding",
+
+  createdAt: serverTimestamp(),
+  paidAt: serverTimestamp(),
+});
     Swal.fire({
       icon: "success",
       title: "Payment Successful",
       text: "Your payment has been confirmed.",
     });
 
-    // 🔹 Clear local state
     setBookingPhotos((prev) => ({
       ...prev,
       [bookingId]: [],
@@ -159,16 +215,41 @@ const confirmPayment = async (bookingId) => {
 
   } catch (err) {
     console.error(err);
-
     Swal.fire({
       icon: "error",
       title: "Payment Failed",
-      text: err.message || "Something went wrong. Try again.",
+      text: err.message || "Something went wrong.",
     });
   }
 };
 
+const cancelBooking = async (bookingId) => {
+  const result = await Swal.fire({
+    title: "Cancel Booking?",
+    text: "Are you sure you want to cancel this booking?",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: "Yes, Cancel",
+    cancelButtonText: "No",
+  });
 
+  if (!result.isConfirmed) return;
+
+  try {
+    const bookingRef = doc(db, "bookings", bookingId);
+
+    await updateDoc(bookingRef, {
+      status: "CANCELLED",
+      cancelledAt: serverTimestamp(),
+      cancelledBy: "customer",
+    });
+
+    Swal.fire("Cancelled", "Your booking has been cancelled.", "success");
+  } catch (err) {
+    console.error(err);
+    Swal.fire("Error", "Could not cancel booking", "error");
+  }
+};
 
   const fetchVehicleInfo = async (vehicleId) => {
     if (!vehicleId) return null;
@@ -176,14 +257,25 @@ const confirmPayment = async (bookingId) => {
     const snap = await getDoc(ref);
     return snap.exists() ? snap.data() : null;
   };
+  const fetchDriverInfo = async (driverId) => {
+  if (!driverId) return null;
 
+  const ref = doc(db, "drivers", driverId);
+  const snap = await getDoc(ref);
+
+  return snap.exists() ? snap.data() : null;
+};
   // ================= FILTER =================
   const filteredBookings = bookings.filter((b) => {
     const status = b.status?.toUpperCase();
 
     if (filterCategory === "PENDING") {
-      if (!["PENDING","BOOKING_PLACED","PAYMENT_PENDING","REJECTED"].includes(status))
-        return false;
+      if (filterCategory === "PENDING") {
+  if (!["PENDING","BOOKING_PLACED","PAYMENT_PENDING","REJECTED"].includes(status))
+    return false;
+}
+
+if (filterCategory === "CANCELLED" && status !== "CANCELLED") return false;
     }
 
     if (filterCategory === "ACTIVE" && status !== "IN_TRANSIT") return false;
@@ -239,7 +331,16 @@ const confirmPayment = async (bookingId) => {
                     <span className={`px-2 py-1 text-xs rounded-md font-semibold ${getBadgeColor(b.status)}`}>
                       {formatStatus(b.status)}
                     </span>
-                    <span className="text-xs text-gray-500">{b.id}</span>
+                    <span
+  onClick={() =>
+  navigate(`/track?bookingId=${b.id}`, {
+    state: { from: "all-bookings" }
+  })
+}
+  className="text-xs text-blue-600 cursor-pointer underline hover:text-blue-800"
+>
+  {b.id}
+</span>
                   </div>
                   <p className="mt-2 text-sm font-medium">
                     {b.agencyName || "Agency not assigned"}
@@ -297,109 +398,174 @@ const confirmPayment = async (bookingId) => {
 
                   <button
                     onClick={async () => {
-                      setSelectedBooking(b);
-                      if (b.vehicleId) {
-                        const v = await fetchVehicleInfo(b.vehicleId);
-                        setVehicleData(v);
-                      } else {
-                        setVehicleData(null);
-                      }
-                      setIsOpen(true);
-                    }}
+  setSelectedBooking(b);
+
+  if (b.vehicleId) {
+    const v = await fetchVehicleInfo(b.vehicleId);
+    setVehicleData(v);
+  } else {
+    setVehicleData(null);
+  }
+
+  if (b.driverId) {
+    const d = await fetchDriverInfo(b.driverId);
+    setDriverData(d);
+  } else {
+    setDriverData(null);
+  }
+
+  setIsOpen(true);
+}}
                     className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm"
                   >
                     View Details
                   </button>
-{b.status?.toUpperCase() === "PAYMENT_PENDING" && (
-  <>
-    {/* Hidden File Input */}
-    <input
-      type="file"
-      id={`file-upload-${b.id}`}
-      accept="image/*"
-      multiple
-      style={{ display: "none" }}
-      onChange={(e) => {
-        const files = Array.from(e.target.files);
-
-        setBookingPhotos((prev) => ({
-          ...prev,
-          [b.id]: files,
-        }));
-
-        Swal.fire(
-          "Photos Selected",
-          `${files.length} photo(s) selected.`,
-          "success"
-        );
-      }}
-    />
-
-    {/* Upload Button */}
-    <button
-      onClick={() =>
-        document.getElementById(`file-upload-${b.id}`).click()
-      }
-      className="px-4 py-1.5 bg-yellow-500 text-white rounded-lg text-sm"
-    >
-      Upload Photo
-    </button>
-{bookingPhotos[b.id] && bookingPhotos[b.id].length > 0 && (
-  <span className="text-xs text-green-600">
-    {bookingPhotos[b.id].length} photo(s) selected ✔
-  </span>
+                  {["PENDING"].includes(b.status?.toUpperCase()) && (
+  <button
+    onClick={() => cancelBooking(b.id)}
+    className="px-4 py-1.5 bg-red-600 text-white rounded-lg text-sm"
+  >
+    Cancel
+  </button>
 )}
-
-    {/* Checkbox */}
-    <div className="flex items-center gap-2">
+{b.status?.toUpperCase() === "PAYMENT_PENDING" && (
+  isPaymentExpired(b.priceSetAt) ? (
+    <span className="text-red-500 text-sm font-semibold">
+      Payment Time Expired
+    </span>
+  ) : (
+    <>
+      {/* Hidden File Input */}
       <input
-        type="checkbox"
-        checked={bookingConfirmed[b.id] || false}
-        onChange={(e) =>
-          setBookingConfirmed((prev) => ({
-            ...prev,
-            [b.id]: e.target.checked,
-          }))
-        }
-      />
-      <label className="text-xs text-gray-600">
-        Confirm without photo
-      </label>
-    </div>
+        type="file"
+        id={`file-upload-${b.id}`}
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+  const files = Array.from(e.target.files);
 
-    {/* Pay Now */}
-   {(() => {
-  const photos = bookingPhotos[b.id];
-  const confirmed = bookingConfirmed[b.id];
-  const canPay = (photos && photos.length > 0) || confirmed;
+  setBookingPhotos((prev) => {
+  const existing = prev[b.id] || [];
 
-  return (
-    <button
-      disabled={!canPay}
-      onClick={() => {
-        if (!canPay) {
-          Swal.fire(
-            "Upload Required",
-            "Upload at least one photo or tick confirmation checkbox.",
-            "warning"
-          );
-          return;
-        }
+  const updated = [...existing, ...files];
 
-        setPaymentBooking(b);
-        setIsPaymentOpen(true);
-      }}
-      className={`px-4 py-1.5 rounded-lg text-sm ${
-        canPay
-          ? "bg-green-600 text-white"
-          : "bg-gray-400 text-white cursor-not-allowed"
-      }`}
-    >
-      Pay Now
-    </button>
+  if (updated.length > 7) {
+    Swal.fire("Limit Exceeded", "Max 7 photos allowed", "warning");
+    return prev;
+  }
+
+  return {
+    ...prev,
+    [b.id]: updated,
+  };
+});
+
+  //  AUTO UNCHECK CHECKBOX
+  setBookingConfirmed((prev) => ({
+    ...prev,
+    [b.id]: false,
+  }));
+
+  Swal.fire(
+    "Photos Selected",
+    `${files.length} photo(s) selected.`,
+    "success"
   );
-})()}
-  </>
+}}
+      />
+
+      {/* Upload Button */}
+      <button
+  disabled={bookingConfirmed[b.id]} //  disable if checkbox ticked
+  onClick={() =>
+    document.getElementById(`file-upload-${b.id}`).click()
+  }
+  className={`px-4 py-1.5 text-white rounded-lg text-sm ${
+    bookingConfirmed[b.id]
+      ? "bg-gray-400 cursor-not-allowed"
+      : "bg-yellow-500"
+  }`}
+>
+  Upload Photo
+</button>
+
+      {bookingPhotos[b.id] && bookingPhotos[b.id].length > 0 && (
+        <span className="text-xs text-green-600">
+          {bookingPhotos[b.id].length} photo(s) selected ✔
+        </span>
+      )}
+
+      {/* Checkbox */}
+      <div className="flex items-center gap-2">
+        <input
+  type="checkbox"
+  disabled={bookingPhotos[b.id]?.length > 0} //  disable if photos selected
+  checked={bookingConfirmed[b.id] || false}
+  onChange={async (e) => {
+    if (e.target.checked) {
+      const result = await Swal.fire({
+        title: "Are you sure?",
+        text: "If you confirm without photo, you won't be able to raise a dispute later.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Yes, Confirm",
+        cancelButtonText: "Cancel",
+      });
+
+      if (!result.isConfirmed) return;
+
+      setBookingConfirmed((prev) => ({
+        ...prev,
+        [b.id]: true,
+      }));
+    } else {
+      setBookingConfirmed((prev) => ({
+        ...prev,
+        [b.id]: false,
+      }));
+    }
+  }}
+/>
+        <label className="text-xs text-gray-600">
+          Confirm without photo
+        </label>
+      </div>
+
+      {/* Pay Now */}
+      {(() => {
+        const photos = bookingPhotos[b.id];
+        const confirmed = bookingConfirmed[b.id];
+        const canPay = (photos && photos.length > 0) || confirmed;
+
+        return (
+          <button
+            disabled={!canPay}
+            onClick={() => {
+              if (!canPay) {
+                Swal.fire(
+                  "Upload Required",
+                  "Upload at least one photo or tick confirmation checkbox.",
+                  "warning"
+                );
+                return;
+              }
+
+              setPaymentBooking(b);
+              setIsPaymentOpen(true);
+            }}
+            className={`px-4 py-1.5 rounded-lg text-sm ${
+              canPay
+                ? "bg-green-600 text-white"
+                : "bg-gray-400 text-white cursor-not-allowed"
+            }`}
+          >
+            Pay Now
+          </button>
+        );
+      })()}
+    </>
+  )
 )}
 
                 </div>
@@ -432,7 +598,8 @@ const confirmPayment = async (bookingId) => {
               <hr />
 
               <p><b>Vehicle:</b> {vehicleData?.type || "Not assigned"}</p>
-              <p><b>Driver:</b> {selectedBooking.driverName || "NA"}</p>
+              <p><b>Driver:</b> {driverData?.driverName || "Not Assigned"}</p>
+<p><b>Driver Phone:</b> {driverData?.phone || "-"}</p>
               <p><b>Weight:</b> {selectedBooking.weight} kg</p>
               <p><b>Goods:</b> {selectedBooking.goodsType}</p>
             </div>

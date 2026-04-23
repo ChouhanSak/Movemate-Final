@@ -88,3 +88,36 @@ def send_driver_assigned_email(customer_email, booking_id, pickup, drop, date_ti
     except Exception as e:
         print("Driver assigned email error:", e)
         return False
+def send_booking_completed_email(customer_email, booking_id):
+    subject = f"✅ MoveMate | Booking Completed | #{booking_id}"
+
+    html_content = f"""
+    <h2>Delivery Completed 🎉</h2>
+
+    <p>Your booking <b>#{booking_id}</b> has been successfully completed.</p>
+
+    <p>We hope your moving experience with <b>MoveMate</b> was smooth.</p>
+
+    <p>If you face any issues or have feedback, feel free to contact us.</p>
+
+    <br>
+
+    <p>Thank you for choosing us 🚚</p>
+    <p><b>MoveMate Team</b></p>
+    """
+
+    message = Mail(
+        from_email=FROM_EMAIL,
+        to_emails=customer_email,
+        subject=subject,
+        html_content=html_content
+    )
+
+    try:
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg.send(message)
+        print("📧 Booking completed email sent")
+        return True
+    except Exception as e:
+        print("Booking completed email error:", e)
+        return False

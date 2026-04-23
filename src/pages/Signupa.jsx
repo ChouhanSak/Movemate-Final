@@ -41,6 +41,8 @@ const STATES = [
   "Puducherry",
 ];
 const ONLY_ALPHABETS_REGEX = /^[A-Za-z\s]*$/;
+const PHONE_REGEX = /^[6-9]\d{9}$/;
+const isAllSameDigits = (num) => /^(\d)\1{9}$/.test(num);
 const BANKS = [
   "State Bank of India",
   "HDFC Bank",
@@ -61,6 +63,7 @@ const BANKS = [
 export default function SignupAgency({ onBack }) {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
+  const [isChecked, setIsChecked] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showBankDropdown, setShowBankDropdown] = useState(false);
   const [showStateDropdown, setShowStateDropdown] = useState(false);
@@ -70,6 +73,7 @@ export default function SignupAgency({ onBack }) {
   state: false,
   agencyName: false,
 });
+const [phoneStartError, setPhoneStartError] = useState(false);
 
   //TAN: 4 letters + 5 digits + 1 letter
 const TAN_REGEX = /^[A-Z]{4}\d{5}[A-Z]$/;
@@ -193,6 +197,10 @@ const verifyKycWithBackend = async (imageUrl, fullName, docType) => {
 const passwordMismatch =
   formData.confirmPassword.length > 0 &&
   formData.password !== formData.confirmPassword;
+  //phone validation
+  const phoneInvalid =
+  formData.phone.length > 0 &&
+  (!PHONE_REGEX.test(formData.phone) || isAllSameDigits(formData.phone));
   // TAN validation
 const tanInvalid =
   formData.tanNumber.length > 0 &&
@@ -216,8 +224,8 @@ const bankAccountInvalid =
 const isStep1Complete =
   formData.fullName.trim() &&
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email) &&
-  formData.phone.length === 10 &&
-  formData.password.length >= 6 &&
+PHONE_REGEX.test(formData.phone) &&
+!isAllSameDigits(formData.phone) &&  formData.password.length >= 6 &&
   !passwordMismatch &&
   formData.agencyName.trim() &&
   formData.perKmRate &&
@@ -228,8 +236,40 @@ const isStep1Complete =
   formData.address.trim() &&
   formData.city.trim() &&
   formData.state.trim() &&
-  formData.pinCode.length === 6 &&
+formData.pinCode.length === 6 && formData.pinCode !== "000000" &&
   !Object.values(alphaErrors).some(Boolean);
+  const fetchCityStateFromPincode = async (pin) => {
+  if (pin.length !== 6 || pin === "000000") return;
+
+  try {
+    const res = await fetch(`https://api.postalpincode.in/pincode/${pin}`);
+    const data = await res.json();
+
+    if (data[0].Status === "Success") {
+      const postOffice = data[0].PostOffice[0];
+
+      setFormData((prev) => ({
+        ...prev,
+        city: postOffice.District,
+        state: postOffice.State,
+      }));
+    } else {
+      Swal.fire({
+        icon: "error",
+        title: "Invalid PIN Code",
+        text: "Please enter a valid Indian PIN code.",
+      });
+
+      setFormData((prev) => ({
+        ...prev,
+        city: "",
+        state: "",
+      }));
+    }
+  } catch (err) {
+    console.error(err);
+  }
+};
   const handleChange = (field, value) => {
    const alphaOnlyFields = ["fullName", "city", "state", "agencyName"];
 
@@ -237,8 +277,25 @@ const isStep1Complete =
     const isValid = ONLY_ALPHABETS_REGEX.test(value);
     setAlphaErrors((prev) => ({ ...prev, [field]: !isValid }));
   } 
-  if (field === "phone") value = value.replace(/\D/g, "").slice(0, 10);
-  if (field === "pinCode") value = value.replace(/\D/g, "").slice(0, 6);
+if (field === "phone") {
+  value = value.replace(/\D/g, "");
+
+  if (value.length === 1 && !/[6-9]/.test(value)) {
+    setPhoneStartError(true);
+    return;
+  } else {
+    setPhoneStartError(false);
+  }
+
+  value = value.slice(0, 10);
+}
+if (field === "pinCode") {
+  value = value.replace(/\D/g, "").slice(0, 6);
+
+  if (value.length === 6 && value !== "000000") {
+    fetchCityStateFromPincode(value);
+  }
+}
   if (field === "registrationNumber" )
    value = value.replace(/\D/g, "").slice(0, 10);
   if (field === "tanNumber")
@@ -277,7 +334,14 @@ const isStep1Complete =
   /* ---------------- KYC FILE HANDLER ---------------- */
   const handleFileChange = async (docName, file) => {
     if (!file) return;
-
+    if (file.size > 5 * 1024 * 1024) {
+  Swal.fire({
+    icon: "error",
+    title: "File Too Large",
+    text: "Maximum file size allowed is 5MB",
+  });
+  return;
+}
     Swal.fire({
       title: "Uploading document...",
       allowOutsideClick: false,
@@ -311,8 +375,7 @@ const isStep1Complete =
     formData.ifsc.trim().toUpperCase().match(/^[A-Z]{4}0[A-Z0-9]{6}$/) &&
     formData.accountHolderName.trim().length > 0;
 
-  const isSubmitEnabled = isKycUploaded && isBankFilled;
-
+const isSubmitEnabled = isKycUploaded && isBankFilled && isChecked;
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -327,9 +390,12 @@ const isStep1Complete =
         Swal.fire({ icon: "error", title: "Invalid Email", text: "Please enter a valid email!" });
         return;
       }
-
-      if (formData.phone.length !== 10) {
-        Swal.fire({ icon: "error", title: "Invalid Phone Number", text: "Phone number must be 10 digits!" });
+      if (!PHONE_REGEX.test(formData.phone) || isAllSameDigits(formData.phone)) {
+        Swal.fire({
+          icon: "error",
+          title: "Invalid Phone Number",
+          text: "Please enter a valid 10-digit Indian mobile number!",
+        });
         return;
       }
 
@@ -566,21 +632,13 @@ try {
   [
     { name: "address", label: "Business Address", placeholder: "Enter business address" },
   ],
+[
+  { name: "pinCode", label: "PIN Code", placeholder: "Enter 6-digit PIN code" },
+],
 
-  // // City + PIN
-  // [
-  //   { name: "city", label: "City", placeholder: "Enter your city" },
-  //   { name: "pinCode", label: "PIN Code", placeholder: "Enter 6-digit PIN code" },
-  // ],
-  // // City + State
 [
   { name: "city", label: "City", placeholder: "Enter your city" },
   { name: "state", label: "State", placeholder: "Enter your state" },
-],
-
-// PIN Code
-[
-  { name: "pinCode", label: "PIN Code", placeholder: "Enter 6-digit PIN code" },
 ],
 ].map((row, idx) => (
   <div
@@ -593,56 +651,39 @@ try {
         <div key={f.name}>
           <label className="block font-medium mb-1">{f.label}</label>
 
-          {f.name === "address" ? (
-            <textarea
-              rows={3}
-              className="w-full p-3 rounded-lg border border-gray-300"
-              placeholder={f.placeholder}
-              value={formData[f.name]}
-              onChange={(e) => handleChange(f.name, e.target.value)}
-            />
-              
-          ) : f.name === "state" ? (
-  <div className="relative">
-    <input
-      type="text"
-      placeholder="Select your state"
-      className="w-full p-3 rounded-lg border border-gray-300"
-      value={formData.state}
-      onChange={(e) => {
-        handleChange("state", e.target.value);
-        setShowStateDropdown(true);
-      }}
-      onBlur={() => setTimeout(() => setShowStateDropdown(false), 150)}
-    />
-
-    {showStateDropdown && (
-      <div className="absolute z-10 w-full bg-white border rounded-md shadow-md max-h-48 overflow-y-auto">
-        {STATES.filter((s) =>
-          s.toLowerCase().includes(formData.state.toLowerCase())
-        ).map((state) => (
-          <div
-            key={state}
-            className="px-3 py-2 cursor-pointer hover:bg-gray-100"
-            onMouseDown={() => {
-              handleChange("state", state);
-              setShowStateDropdown(false);
-            }}
-          >
-            {state}
-          </div>
-        ))}
-      </div>
-    )}
-  </div>
+      {f.name === "address" ? (
+  <textarea
+    rows={3}
+    className="w-full p-3 rounded-lg border border-gray-300"
+    placeholder={f.placeholder}
+    value={formData[f.name]}
+    onChange={(e) => handleChange(f.name, e.target.value)}
+  />
+) : f.name === "city" ? (
+  <input
+    type="text"
+    placeholder="City will be auto-filled from PIN code"
+    className="w-full p-3 rounded-lg border border-gray-300 bg-gray-100"
+    value={formData.city}
+    disabled
+  />
+) : f.name === "state" ? (
+  <input
+    type="text"
+    placeholder="State will be auto-filled from PIN code"
+    className="w-full p-3 rounded-lg border border-gray-300 bg-gray-100"
+    value={formData.state}
+    disabled
+  />
 ) : (
   <div>
     <input
       type={f.type || "text"}
       placeholder={f.placeholder}
       className={`w-full p-3 rounded-lg border ${
-        ((f.name === "password" || f.name === "confirmPassword") &&
-          passwordMismatch) ||
+      ((f.name === "password" || f.name === "confirmPassword") &&
+  passwordMismatch) ||
+(f.name === "phone" && phoneInvalid)||
         (f.name === "tanNumber" && tanInvalid) ||
         (f.name === "registrationNumber" && registrationInvalid)
           ? "border-red-500"
@@ -651,12 +692,13 @@ try {
       value={formData[f.name]}
       onChange={(e) => handleChange(f.name, e.target.value)}
     />
-    {/* 🔤 Alphabets only warning */}
+
     {alphaErrors[f.name] && (
       <p className="text-sm text-red-500 mt-1">
         * Only alphabets are allowed
       </p>
     )}
+
     {f.name === "tanNumber" && tanInvalid && (
       <p className="text-sm text-red-500 mt-1">
         * Format is incorrect. It should be eg: ABCD12345E
@@ -668,6 +710,16 @@ try {
         * Registration number must be 6 to 10 digits
       </p>
     )}
+    {f.name === "phone" && phoneInvalid && (
+  <p className="text-sm text-red-500 mt-1">
+    * Enter a valid 10-digit Indian mobile number
+  </p>
+)}
+{f.name === "phone" && phoneStartError && (
+  <p className="text-sm text-red-500 mt-1">
+    * Mobile number must start with 6-9
+  </p>
+)}
   </div>
 )}
   </div>
@@ -742,106 +794,129 @@ try {
                 );
               })}
             </div>
-
+              {/* Notes */}
+              <div className="mt-4 p-4 bg-gray-50 border rounded-lg text-sm text-gray-600">
+                <p className="font-medium mb-2">Important Instructions:</p>
+                <ul className="list-disc ml-5 space-y-1">
+                  <li>Image should be clear and readable</li>
+                  <li>PDF, JPG, PNG formats allowed</li>
+                  <li>Maximum file size: 5MB</li>
+                  <li>Ensure Aadhaar details match entered information</li>
+                </ul>
+              </div>
             {/* BANK DETAILS */}
             <h3 className="text-lg font-semibold mb-2">🏦 Bank Details</h3>
 
-          {[
-  { name: "bankAccountNumber", label: "Bank Account Number", placeholder: "Enter bank account number" },
-  { name: "bankName", label: "Bank Name", placeholder: "Enter bank name" },
-  { name: "ifsc", label: "IFSC Code", placeholder: "Enter IFSC code" },
-  { name: "accountHolderName", label: "Account Holder Name", placeholder: "Enter account holder's name" },
-].map((f) => (
-  <div key={f.name} className="mb-2 relative">
-    <label className="block font-medium mb-1">{f.label}</label>
+              {[
+      { name: "bankAccountNumber", label: "Bank Account Number", placeholder: "Enter bank account number" },
+      { name: "bankName", label: "Bank Name", placeholder: "Enter bank name" },
+      { name: "ifsc", label: "IFSC Code", placeholder: "Enter IFSC code" },
+      { name: "accountHolderName", label: "Account Holder Name", placeholder: "Enter account holder's name" },
+    ].map((f) => (
+      <div key={f.name} className="mb-2 relative">
+        <label className="block font-medium mb-1">{f.label}</label>
 
-    {f.name === "bankName" ? (
-      /* 🔽 Bank dropdown (already correct) */
-      <div className="relative">
-        <input
-          type="text"
-          className="w-full p-3 rounded-lg border border-gray-300"
-          value={formData.bankName}
-          onChange={(e) => {
-            handleChange("bankName", e.target.value);
-            setShowBankDropdown(true);
-          }}
-          onBlur={() => setTimeout(() => setShowBankDropdown(false), 150)}
-        />
-
-        {showBankDropdown && (
-          <div className="absolute z-10 w-full bg-white border rounded-md shadow-md max-h-48 overflow-y-auto">
-            {BANKS.filter((bank) =>
-              bank.toLowerCase().includes(formData.bankName.toLowerCase())
-            ).map((bank) => (
-              <div
-              key={bank}
-              className="px-3 py-2 cursor-pointer hover:bg-gray-100"
-              onMouseDown={() => {
-                handleChange("bankName", bank);
-                setShowBankDropdown(false);
+        {f.name === "bankName" ? (
+          /* 🔽 Bank dropdown (already correct) */
+          <div className="relative">
+            <input
+              type="text"
+              className="w-full p-3 rounded-lg border border-gray-300"
+              value={formData.bankName}
+              onChange={(e) => {
+                handleChange("bankName", e.target.value);
+                setShowBankDropdown(true);
               }}
-            >
-              {bank}
-            </div>
+              onBlur={() => setTimeout(() => setShowBankDropdown(false), 150)}
+            />
 
-            ))}
+            {showBankDropdown && (
+              <div className="absolute z-10 w-full bg-white border rounded-md shadow-md max-h-48 overflow-y-auto">
+                {BANKS.filter((bank) =>
+                  bank.toLowerCase().includes(formData.bankName.toLowerCase())
+                ).map((bank) => (
+                  <div
+                  key={bank}
+                  className="px-3 py-2 cursor-pointer hover:bg-gray-100"
+                  onMouseDown={() => {
+                    handleChange("bankName", bank);
+                    setShowBankDropdown(false);
+                  }}
+                >
+                  {bank}
+                </div>
+
+                ))}
+              </div>
+            )}
           </div>
+        ) : (
+          <>
+            <input
+              type="text"
+              className={`w-full p-3 rounded-lg border ${
+                (f.name === "bankAccountNumber" && bankAccountInvalid) ||
+                (f.name === "ifsc" && ifscInvalid)
+                  ? "border-red-500"
+                  : "border-gray-300"
+              }`}
+              value={formData[f.name]}
+              onChange={(e) => handleChange(f.name, e.target.value)}
+              required
+            />
+
+            {f.name === "bankAccountNumber" && bankAccountInvalid && (
+              <p className="text-sm text-red-500 mt-1">
+                * Invalid bank account number
+              </p>
+            )}
+
+            {f.name === "ifsc" && ifscInvalid && (
+              <p className="text-sm text-red-500 mt-1">
+                * Invalid IFSC code
+              </p>
+            )}
+          </>
         )}
       </div>
-    ) : (
-      <>
-        <input
-          type="text"
-          className={`w-full p-3 rounded-lg border ${
-            (f.name === "bankAccountNumber" && bankAccountInvalid) ||
-            (f.name === "ifsc" && ifscInvalid)
-              ? "border-red-500"
-              : "border-gray-300"
-          }`}
-          value={formData[f.name]}
-          onChange={(e) => handleChange(f.name, e.target.value)}
-          required
-        />
+    ))}
 
-        {f.name === "bankAccountNumber" && bankAccountInvalid && (
-          <p className="text-sm text-red-500 mt-1">
-            * Invalid bank account number
-          </p>
-        )}
+{/* Checkbox */}
+<div className="flex items-center mt-4">
+  <input
+    type="checkbox"
+    id="aadhaarCheckAgency"
+    checked={isChecked}
+    onChange={(e) => setIsChecked(e.target.checked)}
+    className="mr-2"
+  />
+  <label htmlFor="aadhaarCheckAgency" className="text-sm text-gray-700">
+    I confirm that the Aadhaar card and bank details provided are correct and belong to me.
+  </label>
+</div>
 
-        {f.name === "ifsc" && ifscInvalid && (
-          <p className="text-sm text-red-500 mt-1">
-            * Invalid IFSC code
-          </p>
-        )}
-      </>
-    )}
-  </div>
-))}
+{/* Buttons */}
+<div className="flex justify-between mt-6">
+  <button
+    type="button"
+    onClick={() => setStep(1)}
+    className="px-5 py-2 border rounded-lg"
+  >
+    Previous
+  </button>
 
-            {/* BUTTONS */}
-            <div className="flex justify-between mt-6">
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="px-5 py-2 border rounded-lg"
-              >
-                Previous
-              </button>
-
-              <button
-                type="submit"
-                disabled={!isSubmitEnabled}
-                className={`px-6 py-2 rounded-lg font-semibold text-white ${
-                  isSubmitEnabled
-                    ? "bg-gradient-to-r from-blue-600 to-purple-600"
-                    : "bg-gray-400 cursor-not-allowed"
-                }`}
-              >
-                {loading ? "Submitting..." : "Submit"}
-              </button>
-            </div>
+  <button
+    type="submit"
+    disabled={!isSubmitEnabled}
+    className={`px-6 py-2 rounded-lg font-semibold text-white ${
+      isSubmitEnabled
+        ? "bg-gradient-to-r from-blue-600 to-purple-600"
+        : "bg-gray-400 cursor-not-allowed"
+    }`}
+  >
+    {loading ? "Submitting..." : "Submit"}
+  </button>
+</div>
           </form>
         )}
       </div>

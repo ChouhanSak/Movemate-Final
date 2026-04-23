@@ -4,13 +4,16 @@ import re
 import cv2
 import numpy as np
 import requests
+import gender_guesser.detector as gender
+
+gender_detector = gender.Detector()
 from difflib import SequenceMatcher
 from datetime import datetime
 import unicodedata
 from send_email import send_payment_request_email 
 from send_email import send_driver_assigned_email
-from chatbot.rules import rule_based_response
-from chatbot.ai import ai_response
+from send_email import send_booking_completed_email
+from unidecode import unidecode
 from skimage.metrics import structural_similarity as ssim
 from flask_cors import CORS
 from comparator import compare_multiple
@@ -20,11 +23,11 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 
 # ---------------- OCR Reader ---------------- #
-reader = easyocr.Reader(['en', 'hi'], gpu=False)
+reader = easyocr.Reader(['hi', 'en'], gpu=True)  # GPU faster, Hindi first
 
 # ---------------- Utils ---------------- #
 
-def resize_for_ocr(image, width=900):
+def resize_for_ocr(image, width=1200):
     h, w = image.shape[:2]
     if w <= width:
         return image
@@ -33,8 +36,11 @@ def resize_for_ocr(image, width=900):
 
 def preprocess(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # sharpening kernel
+    kernel = np.array([[0,-1,0],[-1,5,-1],[0,-1,0]])
+    sharpen = cv2.filter2D(th, -1, kernel)
+    return sharpen
 # ---------------- Aadhaar ROI ---------------- #
 
 def get_aadhaar_front_rois(image):
@@ -44,8 +50,8 @@ def get_aadhaar_front_rois(image):
         #  MAIN NAME BLOCK
         image[int(h*0.18):int(h*0.42), int(w*0.08):int(w*0.92)],
 
-        # DOB + Gender
-        image[int(h*0.42):int(h*0.58), int(w*0.08):int(w*0.92)],
+        # Slightly larger area to catch all text
+        image[int(h*0.40):int(h*0.60), int(w*0.05):int(w*0.95)],
 
         # Aadhaar number
         image[int(h*0.70):int(h*0.90), int(w*0.15):int(w*0.85)],
@@ -172,21 +178,23 @@ def extract_name_strict(ocr_result):
     return best[1].title(), round(best[2], 2)
 
 def extract_name_smart(ocr, input_name=""):
-    # 1. Look for the line before DOB
     for i, (_, text, conf) in enumerate(ocr):
         if re.search(r'\d{2}[-/]\d{2}[-/]\d{4}', text):
-            if i > 0:
-                candidate = clean_text(ocr[i-1][1])
+            # look 2 lines above DOB
+            for j in range(max(0, i-2), i):
+                candidate = clean_text(ocr[j][1])
                 if 2 <= len(candidate.split()) <= 4:
                     return candidate.title(), round(conf, 2)
-    
-    # 2. Fallback: first line with 2-4 words and letters only
+
+    # fallback: first line 2-4 words letters only
     for _, text, conf in ocr:
+        if conf < 0.35:
+            continue
         candidate = clean_text(text)
         if 2 <= len(candidate.split()) <= 4 and not re.search(r'\d', candidate):
             return candidate.title(), round(conf, 2)
-    
-    # 3. Final fallback: fuzzy match with input_name
+
+    # fuzzy match with input_name
     if input_name:
         best_ratio = 0
         best_name = None
@@ -198,9 +206,8 @@ def extract_name_smart(ocr, input_name=""):
                 best_name = cn
         if best_ratio >= 0.4:
             return best_name.title(), round(best_ratio, 2)
-    
-    return None, 0.0
 
+    return None, 0.0
 
 # ---------------- Name ---------------- #
 def extract_full_name_from_image(ocr_result, input_name, threshold=0.5):
@@ -257,15 +264,37 @@ def age_band(dob):
         return "UNKNOWN"
 
 # ---------------- Gender ---------------- #
-def find_gender(ocr_result):
-    for _, text, _ in ocr_result:
-        t = re.sub(r"[^a-zA-Z\u0900-\u097F]", "", text.lower())  # remove spaces, symbols
-        if any(g in t for g in ["female", "महिला", "femal"]):
-            return "FEMALE"
-        if any(g in t for g in ["male", "पुरुष", "mal"]):
+def find_gender(ocr_result, input_name=""):
+    # Combine all OCR text
+    full_text = " ".join([t for _, t, _ in ocr_result]).lower()
+    # Keep only letters and Hindi chars
+    full_text = re.sub(r"[^a-z\u0900-\u097f ]", " ", full_text)
+    words = re.findall(r'\b[a-z\u0900-\u097f]+\b', full_text)
+
+    
+    if any(k in words for k in ["female", "महिला"]):
+        return "FEMALE"
+    if any(k in words for k in ["male", "पुरुष"]):
+        return "MALE"
+
+    # Fallback to name-based guessing
+    if input_name:
+        first_name = input_name.split()[0]
+        guessed = gender_detector.get_gender(first_name)
+        if guessed in ["male", "mostly_male"]:
             return "MALE"
+        if guessed in ["female", "mostly_female"]:
+            return "FEMALE"
+
     return "UNKNOWN"
 
+def normalize_name(name):
+    name = name.lower().strip()
+    # Transliterate Hindi → English
+    name = unidecode(name)
+    # Remove non-letter characters
+    name = re.sub(r'[^a-z ]', '', name)
+    return name
 # ---------------- Aadhaar ---------------- #
 
 def extract_aadhaar(text):
@@ -279,19 +308,19 @@ def extract_aadhaar(text):
 
 # ---------------- Verhoeff ---------------- #
 
-d = [[0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],
+verhoeff_d = [[0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],
      [3,4,0,1,2,8,9,5,6,7],[4,0,1,2,3,9,5,6,7,8],[5,9,8,7,6,0,4,3,2,1],
      [6,5,9,8,7,1,0,4,3,2],[7,6,5,9,8,2,1,0,4,3],[8,7,6,5,9,3,2,1,0,4],
      [9,8,7,6,5,4,3,2,1,0]]
 
-p = [[0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],
+verhoeff_p = [[0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],
      [8,9,1,6,0,4,3,5,2,7],[9,4,5,3,1,2,6,8,7,0],[4,2,8,6,5,7,3,9,0,1],
      [2,7,9,3,8,0,6,4,1,5],[7,0,4,6,9,1,3,2,5,8]]
 
 def is_valid_aadhaar(a):
     c = 0
     for i, n in enumerate(reversed(a)):
-        c = d[c][p[i % 8][int(n)]]
+        c = verhoeff_d[c][verhoeff_p[i % 8][int(n)]]
     return c == 0
 
 # ---------------- API ---------------- #
@@ -302,7 +331,7 @@ def verify_kyc():
 
     data = request.json or {}
     image_url = data.get("imageUrl")
-    input_name = data.get("name", "")
+    input_name = data.get("name", "").strip()
 
     if not image_url:
         return jsonify({"status": "MANUAL_REVIEW", "note": "Image missing"})
@@ -311,51 +340,56 @@ def verify_kyc():
     ocr = extract_text_from_image(image_url)
     full_text = " ".join(t for _, t, _ in ocr)
 
-    # Aadhaar number extraction
+    # Aadhaar number extraction (MOST IMPORTANT)
     aadhaar = extract_aadhaar(full_text)
     if not aadhaar:
-        return jsonify({"status":"MANUAL_REVIEW","note":"Aadhaar not found"})
+        return jsonify({
+            "status": "MANUAL_REVIEW",
+            "note": "Aadhaar not found or invalid"
+        })
 
-    #  SMART NAME + Gender extraction
+    # -------- NAME LOGIC -------- #
     nameFromDoc, confidence = extract_name_smart(ocr, input_name)
-    if not nameFromDoc or confidence < 0.5:
-        nameFromDoc = input_name.title()  
-        confidence = 1.0
 
-    gender = find_gender(ocr)
+    name_match_score = 0
 
-    if gender == "UNKNOWN":
-    # Step 1: first name heuristic (only if input_name exists)
-        first_name = input_name.split()[0].lower() if input_name else ""
+    if nameFromDoc:
+        name_match_score = SequenceMatcher(
+            None,
+            normalize_name(nameFromDoc),
+            normalize_name(input_name)
+        ).ratio()
 
-        female_names = ["srishti","priyanshi", "neha", "anjali", "kriti", "anya","kanika","tanu","kanu","stuti","swasti","sakshi"]
-        male_names = ["ram", "rahul", "vikram", "arjun", "raj","mahesh"]
+    # -------- GENDER -------- #
+    gender = find_gender(ocr, input_name)
 
-        if first_name in female_names:
-            gender = "FEMALE"
-        elif first_name in male_names:
-            gender = "MALE"
-        else:
-            gender = "UNKNOWN"
-
-
-    # DOB extraction
+    # -------- DOB -------- #
     dob = extract_dob(ocr)
 
-    # Status
-    status = "AUTO_VERIFIED" if nameFromDoc else "MANUAL_REVIEW"
+   # -------- FINAL DECISION (SIMPLE & SAFE) -------- #
+
+    if not nameFromDoc:
+    # OCR failed → manual review
+        status = "MANUAL_REVIEW"
+
+    else:
+        if name_match_score >= 0.4:
+            status = "AUTO_VERIFIED"
+        else:
+            status = "MANUAL_REVIEW"
 
     return jsonify({
         "status": status,
         "extracted": {
             "nameFromDoc": nameFromDoc,
-            "confidence": confidence,
+            "confidence": round(name_match_score, 2) if nameFromDoc else 1.0,
             "dob": dob,
-            "gender": gender,  # <-- variable use karo, direct call nahi
+            "gender": gender,
             "maskedAadhaar": "XXXX-XXXX-" + aadhaar[-4:],
             "ageBand": age_band(dob)
         }
     })
+
 @app.route("/agency/accept-booking", methods=["POST"])
 def agency_accept_booking():
     data = request.json
@@ -428,19 +462,35 @@ def assign_driver_and_notify():
             "success": False,
             "message": "Email sending failed"
         }), 500
-@app.route("/chat", methods=["POST"])
-def chat():
-    user_query = request.json.get("message")
-    
-    # Step 1: Rule-based
-    response = rule_based_response(user_query)
-    
-    # Step 2: AI fallback
-    if response is None:
-        response = ai_response(user_query)
-    
-    return jsonify({"reply": response})
+@app.route("/booking/completed", methods=["POST"])
+def booking_completed_email():
+    data = request.json
+    print("BOOKING COMPLETED DATA 👉", data)
 
+    customer_email = data.get("email")
+    booking_id = data.get("bookingId")
+
+    if not customer_email or not booking_id:
+        return jsonify({
+            "success": False,
+            "message": "Missing required fields"
+        }), 400
+
+    email_sent = send_booking_completed_email(
+        customer_email,
+        booking_id
+    )
+
+    if email_sent:
+        return jsonify({
+            "success": True,
+            "message": "Booking completed email sent"
+        }), 200
+    else:
+        return jsonify({
+            "success": False,
+            "message": "Email sending failed"
+        }), 500
 @app.route("/compare-damage", methods=["POST"])
 def compare_damage():
     data = request.json
@@ -460,4 +510,3 @@ def compare_damage():
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
-    

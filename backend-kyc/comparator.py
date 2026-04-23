@@ -1,8 +1,10 @@
+# comparator.py
+
 import cv2
 import numpy as np
 import requests
 from sklearn.metrics.pairwise import cosine_similarity
-from model import extract_features
+from model import extract_features_and_labels
 
 def url_to_image(url):
     resp = requests.get(url, timeout=10)
@@ -13,41 +15,59 @@ def url_to_image(url):
 
 def compare_multiple(driver_photos, customer_photos):
     results = []
-
     driver_features = []
+    driver_labels = []
 
-    # Extract features for driver images
+    # 🔹 Extract driver features + labels
     for d_url in driver_photos:
         d_img = url_to_image(d_url)
-        d_feat = extract_features(d_img)
-        driver_features.append(d_feat)
+        d_feat, d_labels = extract_features_and_labels(d_img)
 
-    # Compare each customer image
+        driver_features.append(d_feat)
+        driver_labels.extend(d_labels)
+
+    mismatch_detected = False
+
+    # 🔹 Compare each customer image
     for c_url in customer_photos:
         c_img = url_to_image(c_url)
-        c_feat = extract_features(c_img)
+        c_feat, c_labels = extract_features_and_labels(c_img)
 
+        # Category mismatch check (soft match using top-3 labels)
+        if not any(label in driver_labels for label in c_labels):
+            mismatch_detected = True
+
+        # Similarity check
         best_score = 0
-
         for d_feat in driver_features:
             score = cosine_similarity([c_feat], [d_feat])[0][0]
-            if score > best_score:
-                best_score = score
+            best_score = max(best_score, score)
 
         results.append(best_score)
 
-    overall = sum(results) / len(results)
+    # Edge case: no images
+    if len(results) == 0:
+        return {
+            "similarity": 0,
+            "damageLevel": "NO_IMAGES",
+            "perImageScores": []
+        }
 
+    overall = sum(results) / len(results)
     similarity_percent = round(overall * 100, 2)
 
-    if similarity_percent > 85:
-       damage = "NO_DAMAGE"
-    elif similarity_percent > 65:
-       damage = "MINOR_DAMAGE"
-    elif similarity_percent > 40:
-       damage = "MAJOR_DAMAGE"
+    # 🔹 Final Decision Logic
+    if mismatch_detected:
+        damage = "PRODUCT_MISMATCH"
     else:
-       damage = "PRODUCT_MISMATCH"
+        if similarity_percent > 88:
+            damage = "NO_DAMAGE"
+        elif similarity_percent > 75:
+            damage = "MINOR_DAMAGE"
+        elif similarity_percent > 60:
+            damage = "MAJOR_DAMAGE"
+        else:
+            damage = "MAJOR_DAMAGE"
 
     return {
         "similarity": similarity_percent,

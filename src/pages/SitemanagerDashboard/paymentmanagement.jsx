@@ -1,87 +1,285 @@
-import { useState } from "react";
-
+import { useState, useEffect } from "react";
+import {
+  collection,
+  onSnapshot,
+  query,
+  updateDoc,
+  doc,
+  getDocs,
+  where,
+  getDoc,
+} from "firebase/firestore";
+import { db } from "../../firebase";
+import { serverTimestamp } from "firebase/firestore";
 function Payment() {
+  const [payments, setPayments] = useState([]);
   const [open, setOpen] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState(null);
+const [filterStatus, setFilterStatus] = useState("all"); // all, holding, released
+const [searchQuery, setSearchQuery] = useState("");
+  // Fetch payments + booking names
+  useEffect(() => {
+    const q = query(collection(db, "payments"));
+
+    const unsub = onSnapshot(q, async (snap) => {
+      const list = await Promise.all(
+        snap.docs.map(async (d) => {
+          const data = d.data();
+
+          let agencyName = "";
+let customerName = "";
+let bookingStatus = "";
+let pickupCity = "";
+let dropCity = "";
+
+          // booking fetch
+          if (data.bookingId) {
+            const bookingRef = doc(db, "bookings", data.bookingId);
+            const bookingSnap = await getDoc(bookingRef);
+if (bookingSnap.exists()) {
+  const bookingData = bookingSnap.data();
+
+  agencyName = bookingData.agencyName || "N/A";
+  customerName = bookingData.customerName || "N/A";
+  bookingStatus = bookingData.status || "";
+
+  // ROUTE FIELDS
+  pickupCity = bookingData.pickupAddress?.city || "N/A";
+dropCity = bookingData.dropAddress?.city || "N/A";
+}
+          }
+
+         return {
+  id: d.id,
+  ...data,
+  agencyName,
+  customerName,
+  bookingStatus,
+  pickupCity,
+  dropCity,
+};
+        })
+      );
+//       const filtered = list.filter(p => 
+//   p.releaseAt && p.bookingStatus === "COMPLETED" && p.paymentStatus !== "released"
+// );
+      const filtered = list.filter(p => 
+  p.releaseAt && p.bookingStatus === "COMPLETED"
+);
+setPayments(filtered);
+    });
+
+    return () => unsub();
+  }, []);
+
+  // Auto release payments after releaseAt time
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const snap = await getDocs(
+        query(
+          collection(db, "payments"),
+          where("paymentStatus", "==", "holding")
+        )
+      );
+
+      snap.forEach(async (docSnap) => {
+        const data = docSnap.data();
+
+        if (data.releaseAt && data.releaseAt.toDate() <= new Date()) {
+        await updateDoc(doc(db, "payments", docSnap.id), {
+        paymentStatus: "released",
+        releasedAt: serverTimestamp()
+      });
+        }
+      });
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, []);
+useEffect(() => {
+  if (!selectedPayment) return;
+
+  const fetchRating = async () => {
+    try {
+      const ratingSnap = await getDocs(
+        query(
+          collection(db, "ratings"),
+          where("bookingId", "==", selectedPayment.bookingId)
+        )
+      );
+
+      if (!ratingSnap.empty) {
+        const data = ratingSnap.docs[0].data();
+        setSelectedPayment(prev => ({
+          ...prev,
+          rating: data.rating,
+          comment: data.comment
+        }));
+      } else {
+        setSelectedPayment(prev => ({
+          ...prev,
+          rating: null,
+          comment: null
+        }));
+      }
+    } catch (err) {
+      console.log("Error fetching rating:", err);
+    }
+  };
+
+  fetchRating();
+}, [selectedPayment]);
+
 
   return (
     <div className="p-8">
-      {/* PAGE TITLE */}
-      <h1 className="text-3xl font-bold text-black">
-        Payment Management
-      </h1>
+      {/* TITLE */}
+      <h1 className="text-3xl font-bold text-black">Payment Management</h1>
       <p className="text-gray-500 mt-1">
         Manage payments held and release to agencies
       </p>
 
-      {/* MAIN CARD */}
+      {/* CARD */}
       <div className="mt-8 bg-white rounded-2xl shadow p-6">
         <h2 className="text-lg font-semibold mb-4">
           Payments Ready for Release
         </h2>
+       <div className="flex justify-end items-center gap-3 mb-4">
+  
+  {/* Search */}
+  <input
+    type="text"
+    placeholder="Search by Booking ID or Customer"
+    value={searchQuery}
+    onChange={(e) => setSearchQuery(e.target.value)}
+    className="border rounded-full px-4 py-2 w-64 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+  />
 
-        {/* PAYMENT ITEM */}
-        <div className="border rounded-xl p-6 bg-gradient-to-r from-green-50 to-blue-50">
-          <div className="flex justify-between">
-            <div>
-              <div className="flex gap-2 items-center flex-wrap">
-                <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
-                  Completed
-                </span>
-                <span className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full text-sm">
-                  Holding
-                </span>
-                <span className="text-gray-500">
-                  #TRK456123789
-                </span>
-              </div>
+  {/* Filter */}
+  <select
+    value={filterStatus}
+    onChange={(e) => setFilterStatus(e.target.value)}
+    className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+  >
+    <option value="all">All</option>
+    <option value="holding">Holding</option>
+    <option value="released">Released</option>
+  </select>
 
-              <div className="grid grid-cols-2 gap-4 mt-4 text-sm">
-                <p>
-                  <span className="text-gray-500">Agency:</span>{" "}
-                  Express Transport
-                </p>
-                <p>
-                  <span className="text-gray-500">Customer:</span>{" "}
-                  Priya Sharma
-                </p>
-                <p>
-                  <span className="text-gray-500">Completed:</span>{" "}
-                  Nov 7, 2025
-                </p>
-                <p>
-                  <span className="text-gray-500">Route:</span>{" "}
-                  Kolkata → Bhubaneswar
-                </p>
-              </div>
-            </div>
+</div>
+        {payments.length === 0 && (
+          <p className="text-gray-500">No payments found</p>
+        )}
 
-            <div className="text-right">
-              <p className="text-2xl font-bold text-green-600">
-                ₹15,000
-              </p>
-              <p className="text-sm text-gray-500">
-                Ready to release
-              </p>
-            </div>
-          </div>
+        {payments
+  .filter((p) => {
+    // filter by status
+    if (filterStatus !== "all" && p.paymentStatus !== filterStatus) return false;
 
-          {/* ACTION BUTTONS */}
-          <div className="flex justify-end gap-4 mt-6 pt-4 border-t">
-            <button className="border px-4 py-2 rounded-lg">
-              View Details
-            </button>
-            <button
-              onClick={() => setOpen(true)}
-              className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700"
-            >
-              Release to Agency
-            </button>
-          </div>
+    // search by bookingId or customerName
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      if (
+        !p.bookingId?.toLowerCase().includes(q) &&
+        !p.customerName?.toLowerCase().includes(q)
+      )
+        return false;
+    }
+
+    return true;
+  })
+  .map((p) => (
+    <div
+  key={p.id}
+  className="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-2xl p-6 mb-5 shadow-sm hover:shadow-md transition"
+>
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+
+      {/* LEFT SIDE */}
+      <div className="flex-1">
+
+        {/* STATUS */}
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-semibold">
+            Completed
+          </span>
+
+          <span
+            className={`px-3 py-1 rounded-full text-xs font-semibold ${
+              p.paymentStatus === "released"
+                ? "bg-green-100 text-green-700"
+                : "bg-orange-100 text-orange-600"
+            }`}
+          >
+            {p.paymentStatus === "released"
+              ? "Released"
+              : "Admin Holding"}
+          </span>
+
+          <span className="text-gray-400 text-sm">
+            #{p.bookingId?.slice(0, 10)}
+          </span>
+        </div>
+
+        {/* DETAILS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-y-2 text-sm text-gray-600">
+
+          <p className="mb-2">
+            <span className="text-gray-400">Agency:</span>{" "}
+            <span className="font-medium text-gray-800">
+              {p.agencyName}
+            </span>
+          </p>
+
+          <p className="mb-2">
+            <span className="text-gray-400">Customer:</span>{" "}
+            <span className="font-medium text-gray-800">
+              {p.customerName}
+            </span>
+          </p>
+
+              <p className="mb-2">
+            <span className="text-gray-400">Release At:</span>{" "}
+            {p.releaseAt?.toDate().toLocaleString()}
+          </p>
+          <p className="mb-2">
+  <span className="text-gray-400">Route:</span>{" "}
+  {p.pickupCity || "N/A"} → {p.dropCity || "N/A"}
+</p>
+          
+
         </div>
       </div>
 
+      {/* RIGHT SIDE */}
+    <div className="flex flex-col items-end justify-between min-w-[180px]">
+      <p className="text-3xl font-bold text-emerald-600">₹{p.amount}</p>
+    </div>
+  </div>
+
+  {/* FULL WIDTH DIVIDER */}
+  <div className="-mx-6 border-t border-gray-300 mt-7"></div>
+
+  {/* BUTTON ROW */}
+  <div className="flex justify-end mt-3">
+    <button
+      onClick={() => {
+        setSelectedPayment(p);
+        setOpen(true);
+      }}
+      className="px-4 py-1 rounded-xl text-white bg-gradient-to-r from-emerald-600 to-green-500 hover:scale-105 transition shadow-md"
+    >
+      View Details
+    </button>
+  </div>
+      
+  </div>
+))}
+      </div>
+
+
       {/* MODAL */}
-      {open && (
+      {open && selectedPayment && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 relative">
             <button
@@ -95,68 +293,44 @@ function Payment() {
               Release Payment to{" "}
               <span className="text-blue-600">Agency</span>
             </h2>
-
-            {/* BOOKING INFO */}
             <div className="mt-6 border rounded-xl p-5 bg-gradient-to-r from-green-50 to-blue-50">
-              <p className="font-semibold">Booking #BK002</p>
+              <p className="font-semibold">
+                Booking #{selectedPayment.bookingId}
+              </p>
               <p className="text-sm text-gray-500">
-                TRK456123789
+                Agency: {selectedPayment.agencyName}
+              </p>
+              {/* RATING & COMMENT */}
+  <p className="text-sm text-gray-500 mt-1">
+    Rating:{" "}
+    {selectedPayment.rating != null
+      ? `${selectedPayment.rating} ★`
+      : "Not been rated yet"}
+  </p>
+  <p className="text-sm text-gray-500">
+    Comment:{" "}
+    {selectedPayment.comment
+      ? selectedPayment.comment
+      : "Not been rated yet"}
+  </p>
+              <p className="text-sm text-gray-500">
+                Customer: {selectedPayment.customerName}
               </p>
 
-              <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
-                <p>
-                  <span className="text-gray-500">Agency:</span>{" "}
-                  Express Transport
-                </p>
-                <p>
-                  <span className="text-gray-500">Customer:</span>{" "}
-                  Priya Sharma
-                </p>
-                <p>
-                  <span className="text-gray-500">Completed:</span>{" "}
-                  Nov 7, 2025
-                </p>
-                <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full w-fit">
-                  Completed
-                </span>
-              </div>
-            </div>
-
-            {/* PAYMENT DETAILS */}
-            <div className="mt-6 border rounded-xl p-5 bg-orange-50">
-              <h3 className="font-semibold mb-2">
-                Payment Details
-              </h3>
-
-              <div className="flex justify-between">
-                <span className="text-gray-500">
-                  Amount to Release:
-                </span>
-                <span className="text-xl font-bold text-green-600">
-                  ₹15,000
-                </span>
-              </div>
-
-              <p className="mt-1">
-                <span className="text-gray-500">
-                  Payment Status:
-                </span>{" "}
-                Admin Holding
+              <p className="text-sm text-gray-500">
+                Amount: ₹{selectedPayment.amount}
               </p>
 
-              <p className="text-green-600 mt-1">
-                Action: Transfer to Agency Account
+              <p className="text-sm text-gray-500">
+                Release At:{" "}
+                {selectedPayment.releaseAt?.toDate().toLocaleString()}
               </p>
             </div>
-
-            {/* CONFIRMATION */}
             <div className="mt-6 border rounded-xl p-4 bg-blue-50 text-blue-700">
-              <strong>Confirmation Required:</strong> Once
-              released, this payment will be transferred
-              immediately and cannot be undone.
+              <strong>Confirmation Required:</strong> Once released, this
+              payment will be transferred immediately and cannot be undone.
             </div>
 
-            {/* MODAL BUTTONS */}
             <div className="flex justify-end gap-4 mt-6">
               <button
                 onClick={() => setOpen(false)}
@@ -164,9 +338,8 @@ function Payment() {
               >
                 Cancel
               </button>
-              <button className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700">
-                Confirm & Release Payment
-              </button>
+
+            
             </div>
           </div>
         </div>
@@ -174,5 +347,4 @@ function Payment() {
     </div>
   );
 }
-
 export default Payment;

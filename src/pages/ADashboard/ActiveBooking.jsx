@@ -15,9 +15,11 @@ import { Phone, User, Truck, MapPin, X } from "lucide-react";
 import { Card } from "../../components/ui/card";
 import BookingFilter from "../../components/BookingFilter";
 import EmptyState from "../../components/EmptyState";
+import { getDocs } from "firebase/firestore";
+import { Timestamp } from "firebase/firestore";
 
 /* ---------------- STATUS CONFIG ---------------- */
-const ACTIVE_STATUSES = ["BOOKING_PLACED", "IN_TRANSIT", "COMPLETED"];
+const ACTIVE_STATUSES = ["BOOKING_PLACED", "IN_TRANSIT","WAITING_FOR_PROOF"];
 
 const statusBadgeColor = (status) => {
   if (status === "BOOKING_PLACED") return "bg-indigo-100 text-indigo-700";
@@ -27,11 +29,16 @@ const statusBadgeColor = (status) => {
 };
 
 const formatStatus = (status) => (status ? status.replaceAll("_", " ") : "");
+const getDisplayStatus = (b) => {
+  if (b.proofPending) return "WAITING FOR PROOF";
+  return formatStatus(b.status);
+};
 
 /* ---------------- COMPONENT ---------------- */
 export default function ActiveBooking() {
   const [bookings, setBookings] = useState([]);
   const [vehiclesMap, setVehiclesMap] = useState({});
+  const [driversMap, setDriversMap] = useState({});
   const [modalState, setModalState] = useState({
     open: false,
     bookingId: null,
@@ -42,7 +49,12 @@ const [hasSearched, setHasSearched] = useState(false);
 const handleSearch = () => {
   setHasSearched(true);
 };
-
+const ALLOWED_TRANSITIONS = {
+  BOOKING_PLACED: ["IN_TRANSIT"],
+  IN_TRANSIT: ["COMPLETED"],
+  WAITING_FOR_PROOF: [],
+  COMPLETED: []
+};
 
 const formatAddress = (addr, fallback) => {
   if (!addr) return fallback || "N/A";
@@ -59,7 +71,7 @@ const formatAddress = (addr, fallback) => {
 
 
   /* ---------------- FETCH BOOKINGS ---------------- */
-  useEffect(() => {
+ useEffect(() => {
   if (!auth.currentUser) return;
 
   const q = query(
@@ -70,19 +82,19 @@ const formatAddress = (addr, fallback) => {
   const unsub = onSnapshot(q, async (snap) => {
     const bookingsData = [];
     const vehicleIds = new Set();
+    const driverIds = new Set();
 
     snap.docs.forEach((d) => {
       const data = d.data();
       bookingsData.push({ id: d.id, ...data });
 
-      if (data.vehicleId) {
-        vehicleIds.add(data.vehicleId);
-      }
+      if (data.vehicleId) vehicleIds.add(data.vehicleId);
+      if (data.driverId) driverIds.add(data.driverId);
     });
 
     setBookings(bookingsData);
 
-    // 🔹 Fetch vehicles
+    // 🔹 FETCH VEHICLES
     const vehiclesTemp = {};
     for (let vid of vehicleIds) {
       const vSnap = await getDoc(doc(db, "vehicles", vid));
@@ -90,8 +102,17 @@ const formatAddress = (addr, fallback) => {
         vehiclesTemp[vid] = vSnap.data();
       }
     }
-
     setVehiclesMap(vehiclesTemp);
+
+    // 🔹 FETCH DRIVERS
+    const driversTemp = {};
+    for (let did of driverIds) {
+      const dSnap = await getDoc(doc(db, "drivers", did));
+      if (dSnap.exists()) {
+        driversTemp[did] = dSnap.data();
+      }
+    }
+    setDriversMap(driversTemp);
   });
 
   return () => unsub();
@@ -171,42 +192,72 @@ const filteredBookings = activeBookings.filter((b) => {
 
 
   try {
-    // 🔹 Always update booking status
-    await updateDoc(doc(db, "bookings", modalState.bookingId), {
-      status: modalState.chosenStatus,
-    });
+const currentStatus = currentBooking.status;
 
+if (
+  !ALLOWED_TRANSITIONS[currentStatus]?.includes(modalState.chosenStatus) &&
+  modalState.chosenStatus !== currentStatus
+) {
+  alert("Invalid status transition!");
+  return;
+}
     // 🔹 WHEN STATUS BECOMES IN_TRANSIT
     if (modalState.chosenStatus === "COMPLETED") {
+const driver = driversMap[currentBooking.driverId];
 
-      //  create 20-min upload token
-      const token = await createDriverUploadLink(modalState.bookingId);
+// 🔥 DRIVER LOAD CHECK
+if (!driver) {
+  alert("Driver data still loading. Please wait.");
+  return;
+}
 
-      //  create upload URL
-      const uploadUrl =
-        `${window.location.origin}/driver-upload/${token}`;
+// 🔥 PHONE CHECK
+if (!driver.phone) {
+  alert("Driver phone number missing!");
+  return;
+}
 
-      //  WhatsApp message
-      const msg = encodeURIComponent(
-        `Please upload delivery photos (valid for 20 minutes): ${uploadUrl}`
-      );
+const driverPhone = driver.phone;
 
-      //  auto open WhatsApp
-      const waLink =
-        `https://wa.me/91${currentBooking.driverPhone}?text=${msg}`;
+  // 🔹 create link
+  const token = await createDriverUploadLink(modalState.bookingId);
 
-      window.open(waLink, "_blank");
-    }
+  const uploadUrl =
+    `${window.location.origin}/driver-upload/${token}`;
 
-    // 🔹 WHEN COMPLETED (existing logic)
-    if (modalState.chosenStatus === "COMPLETED") {
-      if (currentBooking?.vehicleId) {
-        await updateDoc(
-          doc(db, "vehicles", currentBooking.vehicleId),
-          { status: "Available" }
-        );
-      }
-    }
+  const msg = encodeURIComponent(
+    `Please upload delivery photos (valid for 20 minutes): ${uploadUrl}`
+  );
+
+  const waLink = `https://wa.me/91${driverPhone}?text=${msg}`;
+
+  // 🔹 try opening WhatsApp
+  const newWindow = window.open(waLink, "_blank");
+
+  if (!newWindow) {
+    alert("Popup blocked! Please allow popups.");
+    return; // ❌ STOP → status update nahi hoga
+  }
+
+  // OPTIONAL: delay (better UX)
+ alert("WhatsApp open ho gaya....");
+}
+const booking = currentBooking;
+ if (modalState.chosenStatus === "COMPLETED") {
+
+  // ❗ DO NOT COMPLETE HERE
+  await updateDoc(doc(db, "bookings", modalState.bookingId), {
+    status: "IN_TRANSIT",
+    proofPending: true,
+  });
+}
+ else {
+  await updateDoc(doc(db, "bookings", modalState.bookingId), {
+    status: modalState.chosenStatus,
+    proofPending: false,
+  });
+}
+   
 
     closeModal();
   } catch (err) {
@@ -289,7 +340,7 @@ const filteredBookings = activeBookings.filter((b) => {
     <div className="flex justify-between items-start">
       <div className="flex flex-wrap items-center gap-2">
         <span className={`px-3 py-1 rounded-full text-sm font-semibold ${statusBadgeColor(b.status)}`}>
-          {formatStatus(b.status)}
+         {getDisplayStatus(b)}
         </span>
 
         <span className="text-gray-500 font-small">
@@ -315,7 +366,9 @@ const filteredBookings = activeBookings.filter((b) => {
 <div className="flex items-center gap-3 mt-3 text-gray-700">
   <User className="w-4 h-4 text-indigo-600" />
   <span>
-    <b>Driver:</b> {b.driverName || "Not Assigned"}
+    <b>Driver:</b>{b.driverId
+  ? driversMap[b.driverId]?.driverName || "Loading..."
+  : "Not Assigned"}
   </span>
 </div>
 
@@ -410,28 +463,47 @@ const filteredBookings = activeBookings.filter((b) => {
               Update Status – #{currentBooking.id}
             </h2>
 
-            {[
-              { label: "Booking Placed", value: "BOOKING_PLACED" },
-              { label: "In Transit", value: "IN_TRANSIT" },
-              { label: "Completed", value: "COMPLETED" },
-            ].map((s) => (
-              <div
-                key={s.value}
-                onClick={() =>
-                  setModalState((prev) => ({
-                    ...prev,
-                    chosenStatus: s.value,
-                  }))
-                }
-                className={`p-4 border rounded-xl cursor-pointer mb-3 ${
-                  modalState.chosenStatus === s.value
-                    ? "border-purple-600 bg-purple-50"
-                    : ""
-                }`}
-              >
-                {s.label}
-              </div>
-            ))}
+            {(() => {
+  const currentStatus = currentBooking.proofPending
+  ? "WAITING_FOR_PROOF"
+  : currentBooking.status;
+
+ const statusOptions = [
+  { label: "Booking Placed", value: "BOOKING_PLACED" },
+  { label: "In Transit", value: "IN_TRANSIT" },
+  { label: "Completed", value: "COMPLETED" },
+];
+
+  return statusOptions.map((s) => {
+  const isAllowed =
+    s.value === currentStatus ||
+    ALLOWED_TRANSITIONS[currentStatus]?.includes(s.value);
+
+  return (
+    <div
+      key={s.value}
+      onClick={() => {
+        if (!isAllowed) return; // ❌ block click
+        setModalState((prev) => ({
+          ...prev,
+          chosenStatus: s.value,
+        }));
+      }}
+      className={`p-4 border rounded-xl mb-3 ${
+        modalState.chosenStatus === s.value
+          ? "border-purple-600 bg-purple-50"
+          : ""
+      } ${
+        !isAllowed
+          ? "opacity-50 cursor-not-allowed bg-gray-100"
+          : "cursor-pointer"
+      }`}
+    >
+      {s.label}
+    </div>
+  );
+});
+})()}
 
             <div className="flex justify-end gap-3 mt-6">
               <button

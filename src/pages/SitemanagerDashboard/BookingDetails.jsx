@@ -1,5 +1,5 @@
 import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "../../Firebase";
+import { db } from "../../firebase";
 import { useEffect, useState } from "react";
 import { X, CalendarCheck } from "lucide-react";
 
@@ -7,7 +7,7 @@ export default function BookingDetails({ bookingId, onClose }) {
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [agencyRate, setAgencyRate] = useState(null);
-
+  const [driver, setDriver] = useState(null);
   useEffect(() => {
   if (!booking?.agencyId) return;
 
@@ -21,7 +21,19 @@ export default function BookingDetails({ bookingId, onClose }) {
 
   return () => unsub();
 }, [booking]);
+useEffect(() => {
+  if (!booking?.driverId) return;
 
+  const driverRef = doc(db, "drivers", booking.driverId);
+
+  const unsub = onSnapshot(driverRef, (snap) => {
+    if (snap.exists()) {
+      setDriver(snap.data());
+    }
+  });
+
+  return () => unsub();
+}, [booking]);
   useEffect(() => {
     if (!bookingId) return;
 
@@ -88,9 +100,13 @@ export default function BookingDetails({ bookingId, onClose }) {
                 <p className="font-medium">{booking.weight}</p>
 
                 <p className="text-gray-500">Driver</p>
-                <p className="font-medium"> {booking.driverName || "Not assigned"} </p>
+                <p className="font-medium">
+                {driver?.driverName || "Not assigned"}
+                </p>
                 <p className="text-gray-500">Driver Phone</p>
-                <p className="font-medium"> {booking.driverPhone || "Not assigned"} </p>
+                <p className="font-medium">
+                {driver?.phone || "Not assigned"}
+                </p>
 
                 <p className="text-gray-500">Vehicle ID</p>
                <p className="font-medium"> {booking.vehicleId || "Not assigned"} </p>

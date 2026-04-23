@@ -7,7 +7,7 @@ import { Eye, EyeOff, ArrowLeft, Info } from "lucide-react";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import Swal from "sweetalert2";
 import { useNavigate } from "react-router-dom";
-import { auth, db } from "../Firebase";
+import { auth, db } from "../firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 
@@ -53,7 +53,7 @@ export default function LoginForm({ userType }) {
       }
 
       const userData = snap.data();
-
+      
       // ✅ SUCCESS → DASHBOARD REDIRECT
       Swal.fire({
         icon: "success",
@@ -103,7 +103,7 @@ const handleGoogleLogin = async () => {
     }
 
     const userData = snap.data();
-
+    
     Swal.fire({
       icon: "success",
       title: "Login Successful",
@@ -112,6 +112,7 @@ const handleGoogleLogin = async () => {
       showConfirmButton: false,
     }).then(() => {
       if (userType === "customer") {
+        localStorage.removeItem("activePage");
         navigate("/customer-dashboard");
       } else {
         navigate("/agency-dashboard");

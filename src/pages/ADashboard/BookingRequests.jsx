@@ -36,7 +36,17 @@ function isPaymentExpired(priceSetAt) {
   const priceTime = priceSetAt.toDate().getTime();
   return now - priceTime > expiryTime;
 }
+function isPickupExpired(pickupDate) {
+  if (!pickupDate) return false;
 
+  const today = new Date();
+
+  const pickup = pickupDate?.toDate
+    ? pickupDate.toDate()
+    : new Date(pickupDate);
+
+  return today > pickup;
+}
 export default function BookingRequests({
   bookingRequests,
   kycStatus,
@@ -177,7 +187,9 @@ const filteredBookings = useMemo(() => {
   <span className="flex items-center gap-2 font-semibold text-sm">
     <span
       className={
-        req.status === "PAYMENT_CONFIRMED"
+        req.status === "CANCELLED"
+  ? "text-red-600"
+        :req.status === "PAYMENT_CONFIRMED"
           ? "text-green-600"
           : req.status === "PAYMENT_PENDING"
           ? isPaymentExpired(req.priceSetAt)
@@ -186,7 +198,9 @@ const filteredBookings = useMemo(() => {
           : "text-yellow-600"
       }
     >
-      {req.status === "PAYMENT_CONFIRMED"
+      {req.status === "CANCELLED"
+  ? "Booking Cancelled by Customer"
+  :req.status === "PAYMENT_CONFIRMED"
         ? "Payment Confirmed"
         : req.status === "PAYMENT_PENDING"
         ? isPaymentExpired(req.priceSetAt)
@@ -270,7 +284,8 @@ const filteredBookings = useMemo(() => {
     View Details
   </button>
 
-  {req.status?.toUpperCase() === "PENDING" && (
+ {req.status?.toUpperCase() === "PENDING" &&
+ !isPickupExpired(req.pickupDate) && req.status !== "CANCELLED" && (
   <button
     onClick={() => handleReject(req.id)}
     className="px-4 py-2 border border-red-500 text-red-600 rounded-lg text-sm hover:bg-red-50"
@@ -278,9 +293,21 @@ const filteredBookings = useMemo(() => {
     Reject
   </button>
 )}
-{req.status?.toUpperCase() === "PENDING"  && (
+{req.status?.toUpperCase() === "PENDING" &&
+ !isPickupExpired(req.pickupDate) && req.status !== "CANCELLED" && (
   <button
     onClick={async () => {
+      if (isPickupExpired(req.pickupDate)) {
+  Swal.fire("Expired", "Pickup date nikal chuki hai", "error");
+  return;
+}
+
+const agencyDoc = await getDoc(doc(db, "agencies", auth.currentUser.uid));
+  if (agencyDoc.exists() && agencyDoc.data().status === "Blocked") {
+    const reason = agencyDoc.data().blockReason || "Contact support for more info.";
+    Swal.fire("Blocked", reason, "error");
+    return;
+  }
       console.log("CUSTOMER ID 👉", req.customerId);
       //  STEP A: customer email fetch from customers collection
 const customerSnap = await getDoc(
@@ -416,9 +443,15 @@ try {
 )}
 
 
-{req.status === "PAYMENT_CONFIRMED" && kycStatus !== "MANUAL_REVIEW" && (
+{req.status === "PAYMENT_CONFIRMED" &&
+ !isPickupExpired(req.pickupDate) &&
+ kycStatus !== "MANUAL_REVIEW" && (
   <button
     onClick={() => {
+      if (isPickupExpired(req.pickupDate)) {
+  Swal.fire("Expired", "Pickup date nikal chuki hai", "error");
+  return;
+}
       setAssignBooking(req);
       setShowAssignModal(true);
     }}
