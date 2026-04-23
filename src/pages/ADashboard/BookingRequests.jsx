@@ -36,17 +36,7 @@ function isPaymentExpired(priceSetAt) {
   const priceTime = priceSetAt.toDate().getTime();
   return now - priceTime > expiryTime;
 }
-function isPickupExpired(pickupDate) {
-  if (!pickupDate) return false;
 
-  const today = new Date();
-
-  const pickup = pickupDate?.toDate
-    ? pickupDate.toDate()
-    : new Date(pickupDate);
-
-  return today > pickup;
-}
 export default function BookingRequests({
   bookingRequests,
   kycStatus,
@@ -284,8 +274,7 @@ const filteredBookings = useMemo(() => {
     View Details
   </button>
 
- {req.status?.toUpperCase() === "PENDING" &&
- !isPickupExpired(req.pickupDate) && req.status !== "CANCELLED" && (
+  {req.status?.toUpperCase() === "PENDING" && req.status !== "CANCELLED" && (
   <button
     onClick={() => handleReject(req.id)}
     className="px-4 py-2 border border-red-500 text-red-600 rounded-lg text-sm hover:bg-red-50"
@@ -293,21 +282,9 @@ const filteredBookings = useMemo(() => {
     Reject
   </button>
 )}
-{req.status?.toUpperCase() === "PENDING" &&
- !isPickupExpired(req.pickupDate) && req.status !== "CANCELLED" && (
+{req.status?.toUpperCase() === "PENDING" && req.status !== "CANCELLED" && (
   <button
     onClick={async () => {
-      if (isPickupExpired(req.pickupDate)) {
-  Swal.fire("Expired", "Pickup date nikal chuki hai", "error");
-  return;
-}
-
-const agencyDoc = await getDoc(doc(db, "agencies", auth.currentUser.uid));
-  if (agencyDoc.exists() && agencyDoc.data().status === "Blocked") {
-    const reason = agencyDoc.data().blockReason || "Contact support for more info.";
-    Swal.fire("Blocked", reason, "error");
-    return;
-  }
       console.log("CUSTOMER ID 👉", req.customerId);
       //  STEP A: customer email fetch from customers collection
 const customerSnap = await getDoc(
@@ -323,17 +300,12 @@ const customerEmail = customerSnap.data().email;
 
 console.log("FINAL EMAIL 👉", customerEmail);
       try {
-        //  Firestore se agency ka perKmRate fetch karo
-        const agencyDoc = await getDoc(doc(db, "agencies", auth.currentUser.uid));
-        const perKmRate = agencyDoc.exists() ? agencyDoc.data().perKmRate || 0 : 0;
+          const agencyDoc = await getDoc(doc(db, "agencies", auth.currentUser.uid));
+const perKmRate = agencyDoc.exists() ? agencyDoc.data().perKmRate || 0 : 0;
 
-        //  Distance from booking
-   let distance = req.distance; // can be null
-        let additionalPrice = 0;
-        let totalPrice = distance * perKmRate;
-
-        //  Swal modal
- Swal.fire({
+let distance = req.distance; // booking se
+let additionalPrice = 0;
+Swal.fire({
   title: 'Set Price',
   html: `
     <div class="text-left space-y-2">
@@ -404,7 +376,7 @@ console.log("FINAL EMAIL 👉", customerEmail);
   if (!res.isConfirmed) return;
 
   await updateDoc(doc(db, "bookings", req.id), {
-    distance: res.value.distance,   // manual save
+    distance: res.value.distance,
     price: res.value.totalPrice,
     additionalCharges: res.value.additionalCharges,
     perKmRate,
@@ -412,25 +384,25 @@ console.log("FINAL EMAIL 👉", customerEmail);
     priceSetAt: serverTimestamp(),
     paymentDeadline: new Date(Date.now() + 5 * 60 * 60 * 1000),
   });
-try {
-  await fetch("http://127.0.0.1:5000/agency/accept-booking", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      customerEmail: customerEmail,
- //  VERY IMPORTANT
-      bookingId: req.id,
-      price: res.value.totalPrice,
-    }),
-  });
-} catch (err) {
-  console.error("Email API failed", err);
-}
+
+  try {
+    await fetch("http://127.0.0.1:5000/agency/accept-booking", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        customerEmail: customerEmail,
+        bookingId: req.id,
+        price: res.value.totalPrice,
+      }),
+    });
+  } catch (err) {
+    console.error("Email API failed", err);
+  }
+
   Swal.fire("Price Sent", "Waiting for customer payment", "success");
 });
-
       } catch (err) {
         console.error(err);
         Swal.fire("Error", "Unable to fetch rate or set price", "error");
@@ -443,15 +415,9 @@ try {
 )}
 
 
-{req.status === "PAYMENT_CONFIRMED" &&
- !isPickupExpired(req.pickupDate) &&
- kycStatus !== "MANUAL_REVIEW" && (
+{req.status === "PAYMENT_CONFIRMED" && kycStatus !== "MANUAL_REVIEW" && (
   <button
     onClick={() => {
-      if (isPickupExpired(req.pickupDate)) {
-  Swal.fire("Expired", "Pickup date nikal chuki hai", "error");
-  return;
-}
       setAssignBooking(req);
       setShowAssignModal(true);
     }}

@@ -67,7 +67,7 @@ onClose("submitted");
           style={textarea}
         />
 
-        {/* Buttons */}
+        {/* Buttons */} 
         <div style={buttonRow}>
           <button
             style={{...notNowBtn, transition:"0.15s"}}

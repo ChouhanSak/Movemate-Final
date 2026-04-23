@@ -1,3 +1,4 @@
+//paymentModal
 import React from "react";
 import { X, MapPin, Plus, CheckCircle } from "lucide-react";
 

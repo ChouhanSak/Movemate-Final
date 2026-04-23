@@ -8,7 +8,7 @@ export default function BookingDetails({ bookingId, onClose }) {
   const [loading, setLoading] = useState(true);
   const [agencyRate, setAgencyRate] = useState(null);
   const [driver, setDriver] = useState(null);
-  useEffect(() => {
+  useEffect(() => { 
   if (!booking?.agencyId) return;
 
   const agencyRef = doc(db, "agencies", booking.agencyId);
